@@ -64,7 +64,7 @@ Route::post('/ci/{token}', [CadastroUsuarioInternoController::class, 'store'])->
 // Registro (somente usuários externos)
 Route::middleware('guest:externo,interno')->group(function () {
     Route::get('/registro', [RegistroController::class, 'showRegistroForm'])->name('registro');
-    Route::post('/registro', [RegistroController::class, 'registro'])->name('registro.submit');
+    Route::post('/registro', [RegistroController::class, 'registro'])->middleware('throttle:10,1')->name('registro.submit');
     
     // Login Unificado (detecta automaticamente o tipo de usuário)
     Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
@@ -861,6 +861,8 @@ Route::middleware(['auth:interno', 'no-cache-auth'])->prefix('admin')->name('adm
     // Relatórios
     Route::prefix('relatorios')->name('relatorios.')->group(function () {
         Route::get('/', [\App\Http\Controllers\Admin\RelatorioController::class, 'index'])->name('index');
+        Route::get('/estabelecimentos', [\App\Http\Controllers\Admin\RelatorioEstabelecimentoController::class, 'index'])->name('estabelecimentos');
+        Route::get('/estabelecimentos/export', [\App\Http\Controllers\Admin\RelatorioEstabelecimentoController::class, 'export'])->name('estabelecimentos.export');
         Route::get('/estabelecimentos-cnae', [\App\Http\Controllers\Admin\RelatorioController::class, 'estabelecimentosPorCnae'])->name('estabelecimentos-cnae');
         Route::get('/documentos-gerados', [\App\Http\Controllers\Admin\RelatorioController::class, 'documentosGerados'])->name('documentos-gerados');
         Route::get('/equipamentos-radiacao', [\App\Http\Controllers\Admin\RelatorioController::class, 'equipamentosRadiacao'])->name('equipamentos-radiacao');

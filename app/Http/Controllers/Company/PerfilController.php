@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Company;
 
 use App\Http\Controllers\Controller;
+use App\Support\NomePessoaHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
@@ -38,6 +39,18 @@ class PerfilController extends Controller
 
         // Remove formatação do telefone
         $validated['telefone'] = preg_replace('/\D/', '', $validated['telefone']);
+
+        // Nome só pode ser corrigido quando o atual parece ser de empresa
+        if (NomePessoaHelper::pareceEmpresa($usuario->nome)) {
+            $nome = mb_strtoupper(preg_replace('/\s+/u', ' ', trim((string) $request->input('nome', ''))), 'UTF-8');
+            $erro = $nome === '' ? 'Informe seu nome completo.' : NomePessoaHelper::erroNomeCompleto($nome);
+
+            if ($erro || mb_strlen($nome) > 255) {
+                return back()->withInput()->withErrors(['nome' => $erro ?? 'O nome deve ter no máximo 255 caracteres.']);
+            }
+
+            $validated['nome'] = $nome;
+        }
 
         $usuario->update($validated);
 

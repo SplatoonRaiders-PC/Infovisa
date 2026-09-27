@@ -19,8 +19,8 @@ class RegistroController extends Controller
     public function showRegistroForm(Request $request)
     {
         // Cadastro habilitado para todos os CPFs
-        $cpfFornecido = $request->query('cpf');
-        
+        $cpfFornecido = preg_replace('/\D/', '', (string) $request->query('cpf', ''));
+
         return view('auth.registro', compact('cpfFornecido'));
     }
 
@@ -29,61 +29,53 @@ class RegistroController extends Controller
      */
     public function registro(RegistroUsuarioExternoRequest $request)
     {
+        // Dados já normalizados pelo FormRequest (CPF/telefone só dígitos, nome maiúsculo, e-mail minúsculo)
+        $dados = $request->safe()->only(['nome', 'cpf', 'email', 'telefone', 'password']);
+        $dados['vinculo_estabelecimento'] = VinculoEstabelecimento::PROPRIETARIO->value;
+        $dados['ativo'] = true;
+        $dados['aceite_termos_em'] = now();
+        $dados['ip_aceite_termos'] = $request->ip();
+
         try {
-            // Remove máscaras para salvar no banco
-            $dados = $request->validated();
-            $dados['cpf'] = preg_replace('/\D/', '', $dados['cpf']);
-            $dados['telefone'] = preg_replace('/\D/', '', $dados['telefone']);
-            $dados['vinculo_estabelecimento'] = $dados['vinculo_estabelecimento'] ?? VinculoEstabelecimento::PROPRIETARIO->value;
-            
-            // Converte nome para maiúsculas
-            $dados['nome'] = mb_strtoupper($dados['nome'], 'UTF-8');
-            
-            // Registra o aceite dos termos
-            $dados['aceite_termos_em'] = now();
-            $dados['ip_aceite_termos'] = $request->ip();
-            
-            // Cria o usuário
             $usuario = UsuarioExterno::create($dados);
-
-            // Faz login automático
-            Auth::guard('externo')->login($usuario);
-
-            return redirect()->route('company.dashboard')
-                ->with('success', 'Cadastro realizado com sucesso! Bem-vindo ao InfoVISA.');
         } catch (QueryException $e) {
-            Log::error('Falha no cadastro de usuário externo (QueryException)', [
-                'cpf' => preg_replace('/\D/', '', $request->input('cpf', '')),
-                'email' => $request->input('email'),
+            // Corrida entre dois envios simultâneos: a constraint unique do banco é a última barreira
+            $mensagem = strtolower($e->getMessage());
+
+            Log::warning('Falha no cadastro de usuário externo (QueryException)', [
+                'cpf' => $dados['cpf'],
+                'email' => $dados['email'],
                 'code' => $e->getCode(),
                 'message' => $e->getMessage(),
             ]);
 
-            $mensagem = strtolower($e->getMessage());
-
-            if (str_contains($mensagem, 'usuarios_externos_cpf_unique') || str_contains($mensagem, 'duplicate key') && str_contains($mensagem, 'cpf')) {
-                return redirect()->back()->withInput()->withErrors(['cpf' => 'Este CPF já está cadastrado.']);
+            if (str_contains($mensagem, 'cpf')) {
+                return back()->withInput()->withErrors(['cpf' => 'Este CPF já está cadastrado. Faça login para acessar.']);
             }
 
-            if (str_contains($mensagem, 'usuarios_externos_email_unique') || str_contains($mensagem, 'duplicate key') && str_contains($mensagem, 'email')) {
-                return redirect()->back()->withInput()->withErrors(['email' => 'Este e-mail já está cadastrado.']);
+            if (str_contains($mensagem, 'email')) {
+                return back()->withInput()->withErrors(['email' => 'Este e-mail já está cadastrado.']);
             }
 
-            return redirect()->back()
-                ->withInput()
-                ->with('error', 'Erro ao realizar cadastro. Tente novamente.');
+            return back()->withInput()->with('error', 'Não foi possível concluir o cadastro. Tente novamente.');
         } catch (\Throwable $e) {
             Log::error('Falha no cadastro de usuário externo', [
-                'cpf' => preg_replace('/\D/', '', $request->input('cpf', '')),
-                'email' => $request->input('email'),
+                'cpf' => $dados['cpf'],
+                'email' => $dados['email'],
                 'exception' => get_class($e),
                 'message' => $e->getMessage(),
             ]);
 
-            return redirect()->back()
-                ->withInput()
-                ->with('error', 'Erro ao realizar cadastro. Tente novamente.');
+            return back()->withInput()->with('error', 'Não foi possível concluir o cadastro. Tente novamente.');
         }
-    }
 
+        Log::info('Usuário externo cadastrado', ['id' => $usuario->id, 'ip' => $request->ip()]);
+
+        // Login automático com nova sessão (evita fixação de sessão)
+        Auth::guard('externo')->login($usuario);
+        $request->session()->regenerate();
+
+        return redirect()->route('company.dashboard')
+            ->with('success', 'Cadastro realizado com sucesso! Bem-vindo ao InfoVISA.');
+    }
 }

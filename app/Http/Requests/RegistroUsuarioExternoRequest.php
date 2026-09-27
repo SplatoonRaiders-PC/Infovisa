@@ -2,11 +2,9 @@
 
 namespace App\Http\Requests;
 
-use App\Enums\VinculoEstabelecimento;
-use Illuminate\Foundation\Http\FormRequest;
 use App\Models\UsuarioExterno;
-use Illuminate\Validation\Rule;
-use Illuminate\Validation\Rules\Password;
+use App\Support\NomePessoaHelper;
+use Illuminate\Foundation\Http\FormRequest;
 
 class RegistroUsuarioExternoRequest extends FormRequest
 {
@@ -20,71 +18,70 @@ class RegistroUsuarioExternoRequest extends FormRequest
 
     /**
      * Get the validation rules that apply to the request.
+     *
+     * Os dados chegam normalizados (ver prepareForValidation):
+     * CPF e telefone somente dígitos, nome em maiúsculas sem espaços duplicados e e-mail em minúsculas.
      */
     public function rules(): array
     {
         return [
-            'nome' => ['required', 'string', 'min:3', 'max:255'],
-            'cpf' => ['required', 'string', 'size:14', 'regex:/^\d{3}\.\d{3}\.\d{3}-\d{2}$/', function ($attribute, $value, $fail) {
-                $cpfLimpo = preg_replace('/\D/', '', $value);
-
-                if (!$this->validarCpf($cpfLimpo)) {
-                    $fail('O CPF informado é inválido.');
-                }
-
-                if (UsuarioExterno::whereRaw("regexp_replace(cpf, '[^0-9]', '', 'g') = ?", [$cpfLimpo])->exists()) {
-                    $fail('Este CPF já está cadastrado.');
+            'nome' => ['required', 'string', 'min:5', 'max:255', function ($attribute, $value, $fail) {
+                if ($erro = NomePessoaHelper::erroNomeCompleto($value)) {
+                    $fail($erro);
                 }
             }],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:usuarios_externos,email'],
-            'telefone' => ['required', 'string', 'min:14', 'max:15', 'regex:/^\(\d{2}\) \d{4,5}-\d{4}$/'],
-            'password' => ['required', 'string', 'confirmed', Password::min(8)->letters()],
-            'aceite_termos' => ['required', 'accepted'],
+            'cpf' => ['required', 'digits:11', function ($attribute, $value, $fail) {
+                if (!self::cpfValido($value)) {
+                    $fail('O CPF informado é inválido.');
+                    return;
+                }
+
+                if (UsuarioExterno::whereRaw("regexp_replace(cpf, '[^0-9]', '', 'g') = ?", [$value])->exists()) {
+                    $fail('Este CPF já está cadastrado. Faça login para acessar.');
+                }
+            }],
+            'email' => ['required', 'string', 'email', 'max:255', function ($attribute, $value, $fail) {
+                if (UsuarioExterno::whereRaw('LOWER(email) = ?', [$value])->exists()) {
+                    $fail('Este e-mail já está cadastrado.');
+                }
+            }],
+            'telefone' => ['required', 'digits_between:10,11'],
+            'password' => ['required', 'string', 'min:8', 'max:255', 'confirmed', function ($attribute, $value, $fail) {
+                if (!preg_match('/\pL/u', $value)) {
+                    $fail('A senha deve conter pelo menos uma letra.');
+                }
+
+                if (!preg_match('/\d/', $value)) {
+                    $fail('A senha deve conter pelo menos um número.');
+                }
+            }],
+            'aceite_termos' => ['accepted'],
         ];
     }
 
     /**
      * Valida se o CPF é matematicamente válido
      */
-    private function validarCpf(string $cpf): bool
+    public static function cpfValido(string $cpf): bool
     {
-        // Remove caracteres não numéricos
         $cpf = preg_replace('/\D/', '', $cpf);
-        
-        // Verifica se tem 11 dígitos
-        if (strlen($cpf) !== 11) {
+
+        if (strlen($cpf) !== 11 || preg_match('/^(\d)\1{10}$/', $cpf)) {
             return false;
         }
-        
-        // Verifica se todos os dígitos são iguais (CPFs inválidos conhecidos)
-        if (preg_match('/^(\d)\1+$/', $cpf)) {
-            return false;
+
+        for ($t = 9; $t < 11; $t++) {
+            $soma = 0;
+            for ($i = 0; $i < $t; $i++) {
+                $soma += (int) $cpf[$i] * (($t + 1) - $i);
+            }
+            $digito = ((10 * $soma) % 11) % 10;
+
+            if ((int) $cpf[$t] !== $digito) {
+                return false;
+            }
         }
-        
-        // Validação do primeiro dígito verificador
-        $soma = 0;
-        for ($i = 0; $i < 9; $i++) {
-            $soma += (int) $cpf[$i] * (10 - $i);
-        }
-        $resto = $soma % 11;
-        $digito1 = ($resto < 2) ? 0 : (11 - $resto);
-        
-        if ((int) $cpf[9] !== $digito1) {
-            return false;
-        }
-        
-        // Validação do segundo dígito verificador
-        $soma = 0;
-        for ($i = 0; $i < 10; $i++) {
-            $soma += (int) $cpf[$i] * (11 - $i);
-        }
-        $resto = $soma % 11;
-        $digito2 = ($resto < 2) ? 0 : (11 - $resto);
-        
-        if ((int) $cpf[10] !== $digito2) {
-            return false;
-        }
-        
+
         return true;
     }
 
@@ -95,61 +92,39 @@ class RegistroUsuarioExternoRequest extends FormRequest
     {
         return [
             'nome.required' => 'O nome é obrigatório.',
-            'nome.min' => 'O nome deve ter no mínimo 3 caracteres.',
-            
+            'nome.min' => 'O nome deve ter no mínimo 5 caracteres.',
+            'nome.max' => 'O nome deve ter no máximo 255 caracteres.',
+
             'cpf.required' => 'O CPF é obrigatório.',
-            'cpf.unique' => 'Este CPF já está cadastrado.',
-            'cpf.regex' => 'O CPF deve estar no formato: 000.000.000-00',
-            
+            'cpf.digits' => 'O CPF deve conter 11 dígitos.',
+
             'email.required' => 'O e-mail é obrigatório.',
             'email.email' => 'Digite um e-mail válido.',
-            'email.unique' => 'Este e-mail já está cadastrado.',
-            
+            'email.max' => 'O e-mail deve ter no máximo 255 caracteres.',
+
             'telefone.required' => 'O telefone é obrigatório.',
-            'telefone.regex' => 'O telefone deve estar no formato: (00) 00000-0000',
-            
+            'telefone.digits_between' => 'Informe um telefone válido com DDD: (00) 00000-0000.',
+
             'password.required' => 'A senha é obrigatória.',
-            'password.confirmed' => 'As senhas não conferem.',
             'password.min' => 'A senha deve ter no mínimo 8 caracteres.',
-            
-            'aceite_termos.required' => 'Você deve aceitar os termos e condições.',
+            'password.confirmed' => 'As senhas não conferem.',
+
             'aceite_termos.accepted' => 'Você deve ler e aceitar os termos e condições para continuar.',
         ];
     }
 
     /**
-     * Prepara os dados para validação
+     * Normaliza os dados antes de validar
      */
     protected function prepareForValidation(): void
     {
-        // Remove máscaras antes de validar
+        $nome = preg_replace('/\s+/u', ' ', trim((string) $this->input('nome', '')));
+
         $this->merge([
-            'cpf' => preg_replace('/\D/', '', $this->cpf ?? ''),
-            'telefone' => preg_replace('/\D/', '', $this->telefone ?? ''),
+            'nome' => mb_strtoupper($nome, 'UTF-8'),
+            'cpf' => preg_replace('/\D/', '', (string) $this->input('cpf', '')),
+            'email' => mb_strtolower(trim((string) $this->input('email', '')), 'UTF-8'),
+            'telefone' => preg_replace('/\D/', '', (string) $this->input('telefone', '')),
         ]);
-
-        // Reformata com máscara para validação
-        if ($this->cpf) {
-            $cpf = $this->cpf;
-            if (strlen($cpf) === 11) {
-                $this->merge([
-                    'cpf' => preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $cpf)
-                ]);
-            }
-        }
-
-        if ($this->telefone) {
-            $telefone = $this->telefone;
-            if (strlen($telefone) === 11) {
-                $this->merge([
-                    'telefone' => preg_replace('/(\d{2})(\d{5})(\d{4})/', '($1) $2-$3', $telefone)
-                ]);
-            } elseif (strlen($telefone) === 10) {
-                $this->merge([
-                    'telefone' => preg_replace('/(\d{2})(\d{4})(\d{4})/', '($1) $2-$3', $telefone)
-                ]);
-            }
-        }
     }
 }
-

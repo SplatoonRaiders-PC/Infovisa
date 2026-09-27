@@ -507,6 +507,28 @@
 
             {{-- Conteúdo da página --}}
             <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+                {{-- Nome do usuário parece ser de empresa --}}
+                @php $usuarioLogadoExterno = auth('externo')->user(); @endphp
+                @if($usuarioLogadoExterno && \App\Support\NomePessoaHelper::pareceEmpresa($usuarioLogadoExterno->nome))
+                <div class="mb-4 bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-xl flex flex-col sm:flex-row sm:items-center gap-3 shadow-sm">
+                    <div class="flex items-start gap-3 flex-1">
+                        <span class="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center flex-shrink-0">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        </span>
+                        <div>
+                            <p class="text-sm font-semibold">Esse nome não parece ser seu: "{{ $usuarioLogadoExterno->nome }}" parece ser de uma empresa.</p>
+                            <p class="text-xs text-amber-800 mt-0.5">O cadastro de usuário deve estar no nome da pessoa (titular do CPF). Atualize seus dados com o seu nome completo.</p>
+                        </div>
+                    </div>
+                    @unless(request()->routeIs('company.perfil.*'))
+                    <a href="{{ route('company.perfil.index') }}#dados" class="flex-shrink-0 inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition">
+                        Atualizar meu nome
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+                    </a>
+                    @endunless
+                </div>
+                @endif
+
                 {{-- Alertas --}}
                 @if(session('success'))
                 <div class="mb-4 bg-emerald-50 border border-emerald-200/80 text-emerald-800 px-4 py-3 rounded-xl flex items-center gap-3 shadow-sm">

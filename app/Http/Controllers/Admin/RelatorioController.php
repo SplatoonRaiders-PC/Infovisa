@@ -14,6 +14,7 @@ use App\Models\Atividade;
 use App\Models\AtividadeEquipamentoRadiacao;
 use App\Models\EquipamentoRadiacao;
 use App\Models\Municipio;
+use App\Support\CnaeCatalogo;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Maatwebsite\Excel\Facades\Excel;
@@ -341,12 +342,38 @@ class RelatorioController extends Controller
     }
 
     /**
-     * Relatório de estabelecimentos por CNAE com escopo automático por perfil.
+     * Relatório de estabelecimentos por CNAE / tipo de atividade, com escopo automático por perfil.
+     *
+     * Filtros de CNAE (atividade, divisão, CNAE exato) selecionam os estabelecimentos que exercem
+     * pelo menos uma atividade correspondente; os totais por CNAE consideram só as atividades correspondentes.
      */
     public function estabelecimentosPorCnae(Request $request)
     {
         $usuario = auth('interno')->user();
-        $competenciaFiltro = $usuario->isAdmin() ? $request->input('competencia') : null;
+
+        $filtros = [
+            'atividade' => (string) $request->input('atividade', ''),
+            'divisao' => preg_replace('/\D/', '', (string) $request->input('divisao', '')),
+            'cnae' => $this->normalizarCodigoCnae($request->input('cnae')),
+            'considerar' => $request->input('considerar') === 'principal' ? 'principal' : 'todas',
+            'situacao' => in_array($request->input('situacao'), ['todos', 'pendentes', 'rejeitados', 'inativos'], true)
+                ? $request->input('situacao')
+                : 'ativos',
+            'competencia' => $usuario->isAdmin() && in_array($request->input('competencia'), ['estadual', 'municipal'], true)
+                ? $request->input('competencia')
+                : null,
+            'municipio_id' => !$usuario->isMunicipal() && $request->filled('municipio_id') ? $request->integer('municipio_id') : null,
+            'busca' => trim((string) $request->input('busca_estabelecimento', '')),
+        ];
+
+        [$filtroArea, $filtroTipo] = [null, null];
+        if (str_starts_with($filtros['atividade'], 'area:') && isset(CnaeCatalogo::AREAS[substr($filtros['atividade'], 5)])) {
+            $filtroArea = substr($filtros['atividade'], 5);
+        } elseif (str_starts_with($filtros['atividade'], 'tipo:') && isset(CnaeCatalogo::TIPOS[substr($filtros['atividade'], 5)])) {
+            $filtroTipo = substr($filtros['atividade'], 5);
+        } else {
+            $filtros['atividade'] = '';
+        }
 
         $catalogoAtividades = Atividade::ativas()
             ->get(['codigo_cnae', 'descricao', 'nome'])
@@ -358,104 +385,216 @@ class RelatorioController extends Controller
             })
             ->toArray();
 
+        // 1) Estabelecimentos do escopo (perfil + filtros que não são de CNAE)
         $query = Estabelecimento::query()
             ->with('municipio')
-            ->orderByRaw('COALESCE(nome_fantasia, razao_social) asc');
+            ->orderByRaw('COALESCE(nome_fantasia, razao_social, nome_completo) asc');
 
         if ($usuario->isMunicipal() && $usuario->municipio_id) {
             $query->where('municipio_id', $usuario->municipio_id);
         }
 
-        if ($usuario->isAdmin() && $request->filled('municipio_id')) {
-            $query->where('municipio_id', $request->integer('municipio_id'));
+        if ($filtros['municipio_id']) {
+            $query->where('municipio_id', $filtros['municipio_id']);
         }
 
-        if ($request->filled('busca_estabelecimento')) {
-            $buscaEstabelecimento = trim($request->busca_estabelecimento);
+        match ($filtros['situacao']) {
+            'ativos' => $query->where('status', 'aprovado')->where('ativo', true),
+            'pendentes' => $query->where('status', 'pendente'),
+            'rejeitados' => $query->where('status', 'rejeitado'),
+            'inativos' => $query->where('ativo', false),
+            default => null,
+        };
 
-            $query->where(function ($subQuery) use ($buscaEstabelecimento) {
-                $subQuery->where('nome_fantasia', 'ilike', "%{$buscaEstabelecimento}%")
-                    ->orWhere('razao_social', 'ilike', "%{$buscaEstabelecimento}%")
-                    ->orWhere('cnpj', 'ilike', "%{$buscaEstabelecimento}%")
-                    ->orWhere('cpf', 'ilike', "%{$buscaEstabelecimento}%");
+        if ($filtros['busca'] !== '') {
+            $busca = $filtros['busca'];
+            $buscaDigitos = preg_replace('/\D/', '', $busca);
+
+            $query->where(function ($subQuery) use ($busca, $buscaDigitos) {
+                $subQuery->where('nome_fantasia', 'ilike', "%{$busca}%")
+                    ->orWhere('razao_social', 'ilike', "%{$busca}%")
+                    ->orWhere('nome_completo', 'ilike', "%{$busca}%");
+
+                if (strlen($buscaDigitos) >= 3) {
+                    $subQuery->orWhere('cnpj', 'ilike', "%{$buscaDigitos}%")
+                        ->orWhere('cpf', 'ilike', "%{$buscaDigitos}%");
+                }
             });
         }
 
-        $estabelecimentosEscopo = $query->get()
-            ->filter(fn($estabelecimento) => $this->estabelecimentoDentroEscopoRelatorio($estabelecimento, $usuario, $competenciaFiltro))
-            ->map(function ($estabelecimento) use ($catalogoAtividades) {
-                $estabelecimento->cnaes_relatorio = collect($this->montarCnaesRelatorioEstabelecimento($estabelecimento, $catalogoAtividades));
+        $escopo = $query->get()
+            ->filter(fn($estabelecimento) => $this->estabelecimentoDentroEscopoRelatorio($estabelecimento, $usuario, $filtros['competencia']))
+            ->map(function ($estabelecimento) use ($catalogoAtividades, $filtros) {
+                $principal = $this->codigoCnaePrincipal($estabelecimento);
+
+                $cnaes = collect($this->montarCnaesRelatorioEstabelecimento($estabelecimento, $catalogoAtividades))
+                    ->map(fn($cnae) => $cnae + [
+                        'tipo' => CnaeCatalogo::tipoDoCnae($cnae['codigo']),
+                        'divisao' => substr($cnae['codigo'], 0, 2),
+                        'principal' => $cnae['codigo'] === $principal,
+                    ]);
+
+                $estabelecimento->cnaes_relatorio = $cnaes;
+                $estabelecimento->cnaes_considerados = $filtros['considerar'] === 'principal'
+                    ? $cnaes->where('principal', true)->values()
+                    : $cnaes;
+                $estabelecimento->competencia_relatorio = $estabelecimento->isCompetenciaEstadual() ? 'estadual' : 'municipal';
+
                 return $estabelecimento;
             })
-            ->filter(fn($estabelecimento) => $estabelecimento->cnaes_relatorio->isNotEmpty())
+            ->filter(fn($estabelecimento) => $estabelecimento->cnaes_considerados->isNotEmpty())
             ->values();
 
-        $resumoCompleto = $estabelecimentosEscopo
-            ->flatMap(function ($estabelecimento) {
-                return $estabelecimento->cnaes_relatorio->map(function ($cnae) use ($estabelecimento) {
-                    return [
-                        'codigo' => $cnae['codigo'],
-                        'codigo_formatado' => $cnae['codigo_formatado'],
-                        'descricao' => $cnae['descricao'],
-                        'estabelecimento_id' => $estabelecimento->id,
-                        'municipio_id' => $estabelecimento->municipio_id,
-                        'municipio_nome' => $estabelecimento->municipio->nome ?? ($estabelecimento->municipio ?? '-'),
-                        'competencia' => $estabelecimento->isCompetenciaEstadual() ? 'estadual' : 'municipal',
-                    ];
-                });
+        // 2) Aplica filtros de CNAE
+        $cnaeCorresponde = function (array $cnae) use ($filtroArea, $filtroTipo, $filtros) {
+            if ($filtroTipo && $cnae['tipo'] !== $filtroTipo) {
+                return false;
+            }
+            if ($filtroArea && CnaeCatalogo::areaDoTipo($cnae['tipo']) !== $filtroArea) {
+                return false;
+            }
+            if ($filtros['divisao'] !== '' && $cnae['divisao'] !== $filtros['divisao']) {
+                return false;
+            }
+            if ($filtros['cnae'] && $cnae['codigo'] !== $filtros['cnae']) {
+                return false;
+            }
+
+            return true;
+        };
+
+        $filtrados = $escopo
+            ->map(function ($estabelecimento) use ($cnaeCorresponde) {
+                $estabelecimento->cnaes_correspondentes = $estabelecimento->cnaes_considerados->filter($cnaeCorresponde)->values();
+
+                return $estabelecimento;
             })
+            ->filter(fn($estabelecimento) => $estabelecimento->cnaes_correspondentes->isNotEmpty())
+            ->values();
+
+        if ($request->input('exportar') === 'csv') {
+            return $this->exportarEstabelecimentosPorCnaeCsv($filtrados);
+        }
+
+        $totalFiltrados = $filtrados->count();
+        $percentual = fn(int $valor) => $totalFiltrados > 0 ? round($valor * 100 / $totalFiltrados, 1) : 0;
+
+        // 3) Agregações
+        $resumoCnaes = $filtrados
+            ->flatMap(fn($estabelecimento) => $estabelecimento->cnaes_correspondentes->map(fn($cnae) => $cnae + [
+                'estabelecimento_id' => $estabelecimento->id,
+                'competencia' => $estabelecimento->competencia_relatorio,
+            ]))
             ->groupBy('codigo')
-            ->map(function ($itens) {
+            ->map(function ($itens) use ($percentual) {
                 $primeiro = $itens->first();
+                $total = $itens->pluck('estabelecimento_id')->unique()->count();
 
                 return [
                     'codigo' => $primeiro['codigo'],
                     'codigo_formatado' => $primeiro['codigo_formatado'],
                     'descricao' => $primeiro['descricao'],
-                    'total_estabelecimentos' => $itens->pluck('estabelecimento_id')->unique()->count(),
-                    'total_municipios' => $itens->pluck('municipio_id')->filter()->unique()->count(),
-                    'competencias' => $itens->pluck('competencia')->unique()->values(),
-                    'competencias_label' => $itens->pluck('competencia')->unique()->map(fn($competencia) => ucfirst($competencia))->implode(', '),
+                    'tipo' => $primeiro['tipo'],
+                    'tipo_nome' => CnaeCatalogo::nomeTipo($primeiro['tipo']),
+                    'total' => $total,
+                    'como_principal' => $itens->where('principal', true)->pluck('estabelecimento_id')->unique()->count(),
+                    'estadual' => $itens->where('competencia', 'estadual')->pluck('estabelecimento_id')->unique()->count(),
+                    'municipal' => $itens->where('competencia', 'municipal')->pluck('estabelecimento_id')->unique()->count(),
+                    'percentual' => $percentual($total),
                 ];
             })
-            ->sortByDesc('total_estabelecimentos')
+            ->sortByDesc('total')
             ->values();
 
-        $cnaeSelecionado = $this->normalizarCodigoCnae($request->input('cnae'));
-        $buscaCnae = trim((string) $request->input('busca_cnae'));
+        $contarPorTipo = fn($colecao, string $campo) => $colecao
+            ->flatMap(fn($estabelecimento) => $estabelecimento->{$campo}->pluck('tipo')->map(fn($tipo) => $tipo ?? 'outros')->unique())
+            ->countBy()
+            ->sortDesc();
 
-        $resumoCnaes = $resumoCompleto
-            ->when($cnaeSelecionado, fn($colecao) => $colecao->where('codigo', $cnaeSelecionado))
-            ->when($buscaCnae !== '', function ($colecao) use ($buscaCnae) {
-                $buscaNormalizada = mb_strtolower($buscaCnae);
-
-                return $colecao->filter(function ($item) use ($buscaNormalizada) {
-                    return str_contains(mb_strtolower($item['codigo_formatado']), $buscaNormalizada)
-                        || str_contains(mb_strtolower($item['descricao']), $buscaNormalizada);
-                });
-            })
+        $porTipo = $contarPorTipo($filtrados, 'cnaes_correspondentes')
+            ->map(fn($total, $slug) => [
+                'slug' => $slug,
+                'nome' => $slug === 'outros' ? 'Outras atividades' : CnaeCatalogo::nomeTipo($slug),
+                'area' => CnaeCatalogo::areaDoTipo($slug),
+                'total' => $total,
+                'percentual' => $percentual($total),
+            ])
+            ->sortBy(fn($item) => $item['slug'] === 'outros' ? 1 : 0) // "Outras atividades" sempre por último
             ->values();
 
-        $estabelecimentosFiltrados = $estabelecimentosEscopo
-            ->when($cnaeSelecionado, function ($colecao) use ($cnaeSelecionado) {
-                return $colecao->filter(function ($estabelecimento) use ($cnaeSelecionado) {
-                    return $estabelecimento->cnaes_relatorio->contains('codigo', $cnaeSelecionado);
-                });
-            })
-            ->values();
+        $porMunicipio = $filtrados
+            ->groupBy(fn($estabelecimento) => mb_strtoupper($estabelecimento->municipio->nome ?? ($estabelecimento->cidade ?: 'Não informado'), 'UTF-8'))
+            ->map->count()
+            ->sortDesc();
 
         $totais = [
-            'estabelecimentos' => $estabelecimentosEscopo->count(),
-            'cnaes' => $resumoCompleto->count(),
-            'estadual' => $estabelecimentosEscopo->filter(fn($estabelecimento) => $estabelecimento->isCompetenciaEstadual())->count(),
-            'municipal' => $estabelecimentosEscopo->filter(fn($estabelecimento) => $estabelecimento->isCompetenciaMunicipal())->count(),
+            'estabelecimentos' => $totalFiltrados,
+            'escopo' => $escopo->count(),
+            'cnaes' => $resumoCnaes->count(),
+            'municipios' => $porMunicipio->count(),
+            'estadual' => $filtrados->where('competencia_relatorio', 'estadual')->count(),
+            'municipal' => $filtrados->where('competencia_relatorio', 'municipal')->count(),
         ];
 
-        $municipios = $usuario->isAdmin()
+        // 4) Opções dos filtros (contagens sobre o escopo, sem os filtros de CNAE)
+        $contagemTiposEscopo = $contarPorTipo($escopo, 'cnaes_considerados');
+        $contagemAreasEscopo = $escopo
+            ->flatMap(fn($estabelecimento) => $estabelecimento->cnaes_considerados->map(fn($cnae) => CnaeCatalogo::areaDoTipo($cnae['tipo']))->filter()->unique())
+            ->countBy();
+
+        $divisoesEscopo = $escopo
+            ->flatMap(fn($estabelecimento) => $estabelecimento->cnaes_considerados->pluck('divisao')->unique())
+            ->countBy()
+            ->sortKeys()
+            ->map(fn($total, $divisao) => [
+                'codigo' => str_pad((string) $divisao, 2, '0', STR_PAD_LEFT),
+                'nome' => CnaeCatalogo::nomeDivisao(str_pad((string) $divisao, 2, '0', STR_PAD_LEFT)),
+                'total' => $total,
+            ])
+            ->values();
+
+        $cnaesEscopo = $escopo
+            ->flatMap(fn($estabelecimento) => $estabelecimento->cnaes_considerados)
+            ->unique('codigo')
+            ->sortBy('codigo')
+            ->map(fn($cnae) => ['codigo' => $cnae['codigo'], 'rotulo' => $cnae['codigo_formatado'] . ' - ' . $cnae['descricao']])
+            ->values();
+
+        $atalhos = $contagemTiposEscopo->except('outros')->take(8)
+            ->map(fn($total, $slug) => ['slug' => $slug, 'nome' => CnaeCatalogo::nomeTipo($slug), 'area' => CnaeCatalogo::areaDoTipo($slug), 'total' => $total])
+            ->values();
+
+        // 5) Gráficos
+        $detalharPorCnae = $filtroTipo || $filtros['cnae'] || $filtros['divisao'] !== '';
+        $graficoPrincipal = $detalharPorCnae
+            ? [
+                'titulo' => 'Estabelecimentos por CNAE',
+                'labels' => $resumoCnaes->take(15)->map(fn($item) => $item['codigo_formatado'] . ' ' . \Illuminate\Support\Str::limit($item['descricao'], 45))->values(),
+                'valores' => $resumoCnaes->take(15)->pluck('total')->values(),
+            ]
+            : [
+                'titulo' => 'Estabelecimentos por tipo de atividade',
+                'labels' => $porTipo->take(15)->pluck('nome')->values(),
+                'valores' => $porTipo->take(15)->pluck('total')->values(),
+            ];
+
+        $graficos = [
+            'principal' => $graficoPrincipal,
+            'municipios' => [
+                'labels' => $porMunicipio->take(10)->keys()->values(),
+                'valores' => $porMunicipio->take(10)->values(),
+            ],
+            'competencia' => [
+                'labels' => ['Estadual', 'Municipal'],
+                'valores' => [$totais['estadual'], $totais['municipal']],
+            ],
+        ];
+
+        $estabelecimentos = $this->paginarColecao($filtrados, 20, $request, 'est_page');
+
+        $municipios = !$usuario->isMunicipal()
             ? Municipio::query()->orderBy('nome')->get(['id', 'nome'])
             : collect();
-
-        $estabelecimentos = $this->paginarColecao($estabelecimentosFiltrados, 15, $request, 'est_page');
 
         $escopoVisual = $usuario->isAdmin()
             ? 'Todos os municípios e competências'
@@ -463,14 +602,81 @@ class RelatorioController extends Controller
                 ? 'Município do usuário e competência municipal'
                 : 'Competência estadual');
 
+        $tituloFiltro = match (true) {
+            (bool) $filtros['cnae'] => 'CNAE ' . $this->formatarCodigoCnae($filtros['cnae']),
+            (bool) $filtroTipo => CnaeCatalogo::nomeTipo($filtroTipo),
+            (bool) $filtroArea => CnaeCatalogo::AREAS[$filtroArea]['nome'],
+            $filtros['divisao'] !== '' => 'Divisão ' . $filtros['divisao'] . ' - ' . CnaeCatalogo::nomeDivisao($filtros['divisao']),
+            default => null,
+        };
+
         return view('admin.relatorios.estabelecimentos-cnae', compact(
+            'filtros',
             'resumoCnaes',
+            'porTipo',
             'estabelecimentos',
             'totais',
+            'graficos',
             'municipios',
             'escopoVisual',
-            'cnaeSelecionado'
+            'tituloFiltro',
+            'atalhos',
+            'contagemTiposEscopo',
+            'contagemAreasEscopo',
+            'divisoesEscopo',
+            'cnaesEscopo',
+            'detalharPorCnae'
         ));
+    }
+
+    /**
+     * Código (somente dígitos) da atividade principal do estabelecimento.
+     */
+    private function codigoCnaePrincipal(Estabelecimento $estabelecimento): ?string
+    {
+        foreach (($estabelecimento->atividades_exercidas ?? []) as $atividade) {
+            if (is_array($atividade) && !empty($atividade['principal'])) {
+                return $this->normalizarCodigoCnae($atividade['codigo'] ?? null);
+            }
+        }
+
+        return $this->normalizarCodigoCnae($estabelecimento->cnae_fiscal);
+    }
+
+    private function exportarEstabelecimentosPorCnaeCsv($estabelecimentos)
+    {
+        $nomeArquivo = 'estabelecimentos-por-cnae-' . now()->format('Y-m-d-His') . '.csv';
+
+        return response()->streamDownload(function () use ($estabelecimentos) {
+            $saida = fopen('php://output', 'w');
+            fwrite($saida, "\xEF\xBB\xBF"); // BOM para o Excel reconhecer UTF-8
+
+            fputcsv($saida, [
+                'Nome fantasia', 'Razão social / Nome', 'CNPJ/CPF', 'Município', 'Competência', 'Status', 'Ativo',
+                'CNAE principal', 'CNAEs correspondentes ao filtro', 'Tipos de atividade', 'Todos os CNAEs',
+            ], ';');
+
+            foreach ($estabelecimentos as $estabelecimento) {
+                $principal = $estabelecimento->cnaes_relatorio->firstWhere('principal', true);
+                $formatarLista = fn($cnaes) => $cnaes->map(fn($cnae) => $cnae['codigo_formatado'] . ' ' . $cnae['descricao'])->implode(' | ');
+
+                fputcsv($saida, [
+                    $estabelecimento->nome_fantasia,
+                    $estabelecimento->razao_social ?: $estabelecimento->nome_completo,
+                    $estabelecimento->cnpj ?: $estabelecimento->cpf,
+                    $estabelecimento->municipio->nome ?? $estabelecimento->cidade,
+                    ucfirst($estabelecimento->competencia_relatorio),
+                    ucfirst((string) $estabelecimento->status),
+                    $estabelecimento->ativo ? 'Sim' : 'Não',
+                    $principal ? $principal['codigo_formatado'] . ' ' . $principal['descricao'] : '',
+                    $formatarLista($estabelecimento->cnaes_correspondentes),
+                    $estabelecimento->cnaes_correspondentes->map(fn($cnae) => CnaeCatalogo::nomeTipo($cnae['tipo']))->unique()->implode(' | '),
+                    $formatarLista($estabelecimento->cnaes_relatorio),
+                ], ';');
+            }
+
+            fclose($saida);
+        }, $nomeArquivo, ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     /**

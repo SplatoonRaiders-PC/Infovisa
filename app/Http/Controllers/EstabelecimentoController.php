@@ -529,12 +529,16 @@ class EstabelecimentoController extends Controller
         $this->autorizarAcessoEstabelecimentoInterno($estabelecimento, 'acessá-lo');
 
         $competenciaEstadual = $estabelecimento->isCompetenciaEstadual();
+        $statusAtivos = ['aberto', 'em_andamento', 'em_analise', 'parado'];
         $processosAtivos = $estabelecimento->processos()
-            ->with('tipoProcesso')
-            ->whereIn('status', ['aberto', 'em_andamento', 'em_analise', 'parado'])
+            ->with(['tipoProcesso', 'usuario:id,nome', 'usuarioExterno:id,nome', 'responsavelAtual:id,nome'])
+            ->withCount(['alertasPendentes', 'documentos'])
+            ->whereIn('status', $statusAtivos)
             ->orderByDesc('created_at')
             ->limit(6)
             ->get();
+        $totalProcessosAtivos = $estabelecimento->processos()->whereIn('status', $statusAtivos)->count();
+        $totalProcessos = $estabelecimento->processos()->count();
         
         // Verifica se o estabelecimento exige equipamentos de radiação
         $exigeEquipamentosRadiacao = \App\Models\AtividadeEquipamentoRadiacao::estabelecimentoExigeEquipamentos($estabelecimento);
@@ -564,6 +568,8 @@ class EstabelecimentoController extends Controller
             'estabelecimento',
             'competenciaEstadual',
             'processosAtivos',
+            'totalProcessosAtivos',
+            'totalProcessos',
             'exigeEquipamentosRadiacao',
             'equipamentosRadiacao',
             'totalEquipamentosRadiacao',

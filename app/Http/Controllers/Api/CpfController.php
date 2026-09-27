@@ -31,7 +31,8 @@ class CpfController extends Controller
         }
 
         // 2. Verificar se já existe cadastro como usuário externo (impedir duplicidade)
-        $externoExistente = UsuarioExterno::where('cpf', $cpf)->first();
+        // Mesma comparação usada na validação do cadastro (ignora máscara salva em registros antigos)
+        $externoExistente = UsuarioExterno::whereRaw("regexp_replace(cpf, '[^0-9]', '', 'g') = ?", [$cpf])->exists();
         if ($externoExistente) {
             return response()->json([
                 'valido'      => true,

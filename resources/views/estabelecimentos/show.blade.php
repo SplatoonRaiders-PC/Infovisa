@@ -405,7 +405,7 @@
         </div>
 
         {{-- Coluna Direita - Dados do Estabelecimento --}}
-        <div class="space-y-6" style="flex: 1;">
+        <div class="space-y-6 min-w-0" style="flex: 1;">
             {{-- Informações Gerais --}}
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
                 <div class="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100 border-b border-slate-200">
@@ -505,89 +505,200 @@
             </div>
 
             {{-- Processos em Andamento --}}
-            @if($processosAtivos->count() > 0)
+            @if($processosAtivos->count() > 0 || $estabelecimento->status === 'aprovado' || $totalProcessos > 0)
+            @php
+                $statusProcessoConfig = [
+                    'aberto'       => ['label' => 'Aberto',       'pill' => 'bg-blue-50 text-blue-700 ring-blue-200',       'dot' => 'bg-blue-500',   'bar' => 'from-blue-500 to-indigo-500'],
+                    'em_andamento' => ['label' => 'Em andamento', 'pill' => 'bg-amber-50 text-amber-700 ring-amber-200',    'dot' => 'bg-amber-500',  'bar' => 'from-amber-400 to-orange-500'],
+                    'em_analise'   => ['label' => 'Em análise',   'pill' => 'bg-violet-50 text-violet-700 ring-violet-200', 'dot' => 'bg-violet-500', 'bar' => 'from-violet-500 to-purple-500'],
+                    'parado'       => ['label' => 'Parado',       'pill' => 'bg-red-50 text-red-700 ring-red-200',          'dot' => 'bg-red-500',    'bar' => 'from-red-500 to-rose-500'],
+                ];
+                $statusProcessoPadrao = ['label' => null, 'pill' => 'bg-slate-100 text-slate-700 ring-slate-200', 'dot' => 'bg-slate-400', 'bar' => 'from-slate-400 to-slate-500'];
+                $resumoStatus = $processosAtivos->groupBy('status')->map->count();
+            @endphp
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
-                <div class="px-5 py-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-slate-200 flex items-center justify-between">
-                    <h3 class="text-sm font-semibold text-slate-900 flex items-center gap-2">
-                        <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                        </svg>
-                        Processos Ativos
-                    </h3>
-                    <a href="{{ route('admin.estabelecimentos.processos.index', $estabelecimento->id) }}" 
-                       class="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
-                        Ver todos
+                {{-- Cabeçalho --}}
+                <div class="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <div class="w-9 h-9 flex-shrink-0 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-sm shadow-blue-500/30">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                            </svg>
+                        </div>
+                        <div class="min-w-0">
+                            <h3 class="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                                Processos Ativos
+                                <span class="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] font-bold tabular-nums">{{ $totalProcessosAtivos }}</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-500 mt-0.5">
+                                @if($totalProcessosAtivos > $processosAtivos->count())
+                                    Exibindo os {{ $processosAtivos->count() }} mais recentes ·
+                                @endif
+                                {{ $totalProcessos }} {{ $totalProcessos === 1 ? 'processo' : 'processos' }} no total
+                            </p>
+                        </div>
+                    </div>
+                    <a href="{{ route('admin.estabelecimentos.processos.index', $estabelecimento->id) }}"
+                       class="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg ring-1 ring-inset ring-blue-200 transition-colors self-start sm:self-auto">
+                        Ver todos os processos
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
                         </svg>
                     </a>
                 </div>
-                <div class="p-5">
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 justify-items-center">
-                        @foreach($processosAtivos as $processo)
-                        <a href="{{ route('admin.estabelecimentos.processos.show', [$estabelecimento->id, $processo->id]) }}" 
-                           class="group block w-full max-w-sm bg-gradient-to-b from-white to-blue-50/30 rounded-xl border border-transparent ring-1 ring-gray-200 hover:ring-blue-200 shadow-md hover:shadow-xl transition-all duration-200 overflow-hidden">
-                            <div class="p-5 text-center relative">
-                                {{-- Header com Status e Menu --}}
-                                <div class="flex items-start justify-center mb-4">
-                                    @php
-                                        $statusColors = [
-                                            'aberto' => 'bg-blue-100 text-blue-700',
-                                            'em_andamento' => 'bg-amber-100 text-amber-700',
-                                            'em_analise' => 'bg-purple-100 text-purple-700',
-                                            'parado' => 'bg-orange-100 text-orange-700',
-                                        ];
-                                        $statusLabels = [
-                                            'aberto' => 'Aberto',
-                                            'em_andamento' => 'Em Andamento',
-                                            'em_analise' => 'Em Análise',
-                                            'parado' => 'Parado',
-                                        ];
-                                    @endphp
-                                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold {{ $statusColors[$processo->status] ?? 'bg-slate-100 text-slate-700' }}">
-                                        {{ $statusLabels[$processo->status] ?? $processo->status }}
+
+                @if($processosAtivos->isEmpty())
+                {{-- Estado vazio --}}
+                <div class="px-5 py-10 text-center">
+                    <div class="w-12 h-12 mx-auto rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                    </div>
+                    <p class="text-sm font-semibold text-slate-800">Nenhum processo ativo</p>
+                    <p class="text-xs text-slate-500 mt-1">
+                        {{ $totalProcessos > 0 ? 'Todos os processos deste estabelecimento estão arquivados ou concluídos.' : 'Este estabelecimento ainda não possui processos.' }}
+                    </p>
+                    <a href="{{ route('admin.estabelecimentos.processos.index', $estabelecimento->id) }}"
+                       class="inline-flex items-center gap-1.5 mt-4 px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors">
+                        {{ $totalProcessos > 0 ? 'Ver histórico de processos' : 'Ir para processos' }}
+                    </a>
+                </div>
+                @else
+                {{-- Resumo por status --}}
+                @if($resumoStatus->count() > 1)
+                <div class="px-5 pt-4 flex flex-wrap gap-2">
+                    @foreach($resumoStatus as $status => $qtd)
+                        @php $cfg = $statusProcessoConfig[$status] ?? $statusProcessoPadrao; @endphp
+                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium ring-1 ring-inset {{ $cfg['pill'] }}">
+                            <span class="w-1.5 h-1.5 rounded-full {{ $cfg['dot'] }}"></span>
+                            {{ $cfg['label'] ?? ucfirst(str_replace('_', ' ', $status)) }}
+                            <span class="font-bold tabular-nums">{{ $qtd }}</span>
+                        </span>
+                    @endforeach
+                </div>
+                @endif
+
+                <div class="p-5 grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-4">
+                    @foreach($processosAtivos as $processo)
+                    @php
+                        $cfg = $statusProcessoConfig[$processo->status] ?? $statusProcessoPadrao;
+                        $diasAberto = (int) $processo->created_at->copy()->startOfDay()->diffInDays(now()->startOfDay());
+                        $idadeTexto = $diasAberto === 0 ? 'Aberto hoje' : ($diasAberto === 1 ? 'Aberto há 1 dia' : "Aberto há {$diasAberto} dias");
+
+                        $setorNome = $processo->setor_atual_nome;
+                        $responsavel = $processo->responsavelAtual;
+                        $iniciais = $responsavel
+                            ? collect(explode(' ', trim($responsavel->nome)))->filter()->map(fn($p) => mb_substr($p, 0, 1))->take(2)->implode('')
+                            : null;
+
+                        $criadoPor = $processo->aberto_por_externo || (!$processo->usuario && $processo->usuarioExterno)
+                            ? ($processo->usuarioExterno?->nome ? $processo->usuarioExterno->nome . ' (externo)' : 'Usuário externo')
+                            : ($processo->usuario?->nome ?? 'Sistema');
+
+                        $prazo = $processo->prazo_atribuicao;
+                        $prazoDias = $prazo ? (int) now()->startOfDay()->diffInDays($prazo->copy()->startOfDay(), false) : null;
+                        $prazoClasse = $prazo === null ? null : ($prazoDias < 0 ? 'bg-red-50 text-red-700 ring-red-200' : ($prazoDias <= 3 ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-slate-50 text-slate-600 ring-slate-200'));
+                        $prazoTexto = $prazo === null ? null : ($prazoDias < 0 ? 'Prazo vencido há ' . abs($prazoDias) . ' dia(s)' : ($prazoDias === 0 ? 'Prazo vence hoje' : 'Prazo em ' . $prazo->format('d/m')));
+                    @endphp
+                    <a href="{{ route('admin.estabelecimentos.processos.show', [$estabelecimento->id, $processo->id]) }}"
+                       class="group relative flex flex-col bg-white rounded-xl ring-1 ring-slate-200 hover:ring-blue-300 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                        {{-- Faixa de status --}}
+                        <span class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r {{ $cfg['bar'] }}"></span>
+
+                        <div class="p-4 pt-5 flex-1 flex flex-col gap-3">
+                            {{-- Status + Idade --}}
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset {{ $cfg['pill'] }}">
+                                    <span class="w-1.5 h-1.5 rounded-full {{ $cfg['dot'] }} {{ $processo->status === 'parado' ? '' : 'animate-pulse' }}"></span>
+                                    {{ $cfg['label'] ?? ucfirst(str_replace('_', ' ', $processo->status)) }}
+                                </span>
+                                <span class="inline-flex items-center gap-1 text-[11px] text-slate-400 whitespace-nowrap" title="Aberto em {{ $processo->created_at->timezone('America/Sao_Paulo')->format('d/m/Y H:i') }}">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                    {{ $idadeTexto }}
+                                </span>
+                            </div>
+
+                            {{-- Tipo + Número --}}
+                            <div>
+                                <p class="text-xs font-semibold text-slate-600 leading-snug line-clamp-2" title="{{ $processo->tipo_nome }}">
+                                    {{ $processo->tipo_nome }}
+                                </p>
+                                <p class="mt-1 text-xl font-bold text-slate-900 group-hover:text-blue-700 tabular-nums tracking-tight transition-colors">
+                                    <span class="text-slate-300 font-semibold">nº</span> {{ $processo->numero_processo }}
+                                </p>
+                            </div>
+
+                            {{-- Com quem está --}}
+                            <div class="flex items-center gap-2.5 p-2 rounded-lg bg-slate-50 ring-1 ring-inset ring-slate-100">
+                                @if($responsavel)
+                                    <span class="w-7 h-7 flex-shrink-0 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-white text-[10px] font-bold flex items-center justify-center uppercase">{{ $iniciais }}</span>
+                                @else
+                                    <span class="w-7 h-7 flex-shrink-0 rounded-full {{ $setorNome ? 'bg-slate-200 text-slate-500' : 'bg-amber-100 text-amber-600' }} flex items-center justify-center">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                        </svg>
                                     </span>
-                                    <button class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
-                                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"/>
-                                        </svg>
-                                    </button>
-                                </div>
-                                
-                                {{-- Tipo do Processo --}}
-                                <div class="mb-3">
-                                    <p class="text-sm font-semibold text-slate-700 uppercase tracking-wide">
-                                        {{ $processo->tipoProcesso->nome ?? 'Sem tipo' }}
-                                    </p>
-                                </div>
-                                
-                                {{-- Número do Processo --}}
-                                <div class="mb-4">
-                                    <p class="text-2xl font-bold text-blue-600 group-hover:text-blue-700 transition-colors">
-                                        {{ $processo->numero }}
-                                    </p>
-                                </div>
-                                
-                                {{-- Footer com Informações --}}
-                                <div class="space-y-2 pt-3 border-t border-slate-100">
-                                    <div class="flex items-center justify-center gap-2 text-xs text-slate-500">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                                        </svg>
-                                        <span>Criado em: {{ $processo->created_at->format('d/m/Y') }}</span>
-                                    </div>
-                                    <div class="flex items-center justify-center gap-2 text-xs text-slate-500">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-                                        </svg>
-                                        <span>Criado por: N/A</span>
-                                    </div>
+                                @endif
+                                <div class="min-w-0 leading-tight">
+                                    <p class="text-[10px] text-slate-400 font-medium">Com quem está</p>
+                                    @if($responsavel || $setorNome)
+                                        <p class="text-xs font-semibold text-slate-800 truncate" title="{{ $responsavel?->nome }}">{{ $responsavel?->nome ?? $setorNome }}</p>
+                                        @if($responsavel && $setorNome)
+                                        <p class="text-[10px] text-slate-500 truncate" title="{{ $setorNome }}">{{ $setorNome }}</p>
+                                        @endif
+                                    @else
+                                        <p class="text-xs font-semibold text-amber-700">Não atribuído</p>
+                                    @endif
                                 </div>
                             </div>
-                        </a>
-                        @endforeach
-                    </div>
+
+                            {{-- Alertas contextuais --}}
+                            @if($processo->status === 'parado' || $prazoTexto || $processo->alertas_pendentes_count > 0)
+                            <div class="flex flex-wrap gap-1.5">
+                                @if($processo->status === 'parado')
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 max-w-full"
+                                      title="{{ $processo->motivo_parada }}">
+                                    <svg class="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                                    <span class="truncate">Parado{{ $processo->data_parada ? ' desde ' . $processo->data_parada->format('d/m/Y') : '' }}</span>
+                                </span>
+                                @endif
+                                @if($prazoTexto)
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold ring-1 ring-inset {{ $prazoClasse }}" title="Prazo de atribuição: {{ $prazo->format('d/m/Y') }}">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                    {{ $prazoTexto }}
+                                </span>
+                                @endif
+                                @if($processo->alertas_pendentes_count > 0)
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+                                    {{ $processo->alertas_pendentes_count }} {{ $processo->alertas_pendentes_count === 1 ? 'alerta' : 'alertas' }}
+                                </span>
+                                @endif
+                            </div>
+                            @endif
+                        </div>
+
+                        {{-- Rodapé --}}
+                        <div class="px-4 py-2.5 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span class="min-w-0 truncate" title="Aberto por {{ $criadoPor }}">
+                                por <span class="font-medium text-slate-600">{{ $criadoPor }}</span>
+                            </span>
+                            <div class="flex items-center gap-3 flex-shrink-0">
+                                <span class="inline-flex items-center gap-1" title="{{ $processo->documentos_count }} documento(s) no processo">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                                    <span class="tabular-nums">{{ $processo->documentos_count }}</span>
+                                </span>
+                                <span class="inline-flex items-center gap-0.5 font-semibold text-blue-600 group-hover:gap-1.5 transition-all">
+                                    Abrir
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+                                </span>
+                            </div>
+                        </div>
+                    </a>
+                    @endforeach
                 </div>
+                @endif
             </div>
             @endif
 

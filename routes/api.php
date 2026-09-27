@@ -14,7 +14,7 @@ Route::post('/consultar-cnpj', [CnpjController::class, 'consultar']);
 Route::get('/verificar-cnpj/{cnpj}', [CnpjController::class, 'verificarExistente']);
 
 // Rota para consulta de CPF (registro de usuário externo)
-Route::post('/consultar-cpf', [CpfController::class, 'consultar']);
+Route::post('/consultar-cpf', [CpfController::class, 'consultar'])->middleware('throttle:30,1');
 
 // Rota para verificar competência de atividades
 Route::post('/verificar-competencia', [CnpjController::class, 'verificarCompetencia']);

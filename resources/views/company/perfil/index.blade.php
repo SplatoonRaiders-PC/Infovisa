@@ -22,21 +22,34 @@
     </div>
 
     {{-- Formulário de Dados --}}
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+    @php $nomeEditavel = \App\Support\NomePessoaHelper::pareceEmpresa($usuario->nome); @endphp
+    <div id="dados" class="bg-white rounded-xl shadow-sm border {{ $nomeEditavel ? 'border-amber-300 ring-2 ring-amber-100' : 'border-gray-100' }}">
         <div class="px-6 py-4 border-b border-gray-100">
-            <h3 class="text-lg font-semibold text-gray-900">Dados de Contato</h3>
-            <p class="text-sm text-gray-500">Atualize seu e-mail e telefone</p>
+            <h3 class="text-lg font-semibold text-gray-900">{{ $nomeEditavel ? 'Dados Pessoais e de Contato' : 'Dados de Contato' }}</h3>
+            <p class="text-sm text-gray-500">{{ $nomeEditavel ? 'Corrija seu nome e mantenha seu e-mail e telefone atualizados' : 'Atualize seu e-mail e telefone' }}</p>
         </div>
-        
+
         <form action="{{ route('company.perfil.update-dados') }}" method="POST" class="p-6 space-y-4">
             @csrf
             @method('PUT')
-            
+
             <div>
-                <label for="nome" class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
-                <input type="text" id="nome" value="{{ $usuario->nome }}" disabled
-                       class="w-full px-4 py-2.5 bg-gray-100 border border-gray-200 rounded-lg text-gray-500 cursor-not-allowed">
-                <p class="mt-1 text-xs text-gray-400">O nome não pode ser alterado</p>
+                <label for="nome" class="block text-sm font-medium text-gray-700 mb-1">Nome completo</label>
+                @if($nomeEditavel)
+                    <input type="text" name="nome" id="nome" value="{{ old('nome') }}" required maxlength="255" autofocus
+                           oninput="this.value = this.value.toUpperCase()" placeholder="SEU NOME COMPLETO, COMO CONSTA NO CPF"
+                           class="w-full px-4 py-2.5 uppercase border border-amber-400 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 @error('nome') border-red-500 @enderror">
+                    <p class="mt-1 text-xs text-amber-700">
+                        O nome atual (<strong>{{ $usuario->nome }}</strong>) parece ser de uma empresa. Informe o seu nome completo de pessoa física.
+                    </p>
+                    @error('nome')
+                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                    @enderror
+                @else
+                    <input type="text" id="nome" value="{{ $usuario->nome }}" disabled
+                           class="w-full px-4 py-2.5 bg-gray-100 border border-gray-200 rounded-lg text-gray-500 cursor-not-allowed">
+                    <p class="mt-1 text-xs text-gray-400">O nome não pode ser alterado</p>
+                @endif
             </div>
 
             <div>
