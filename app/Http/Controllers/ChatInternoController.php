@@ -8,8 +8,10 @@ use App\Models\ChatConversa;
 use App\Models\ChatMensagem;
 use App\Models\ChatUsuarioOnline;
 use App\Models\UsuarioInterno;
+use App\Http\Controllers\Admin\DashboardController;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -549,6 +551,190 @@ class ChatInternoController extends Controller
         return response()->json([
             'mensagens' => $broadcasts,
         ]);
+    }
+
+    /**
+     * Assistente de Pendências: resume as demandas do usuário logado (as mesmas de "Minhas demandas"
+     * do dashboard), destacando o que está atrasado ou vencendo.
+     */
+    public function assistente(Request $request): JsonResponse
+    {
+        $usuario = auth('interno')->user();
+        $chaveCache = 'chat_assistente_pendencias_v3_' . $usuario->id;
+
+        if ($request->boolean('atualizar')) {
+            Cache::forget($chaveCache);
+        }
+
+        // O cálculo das demandas é pesado; o resumo é reaproveitado por alguns minutos
+        $dados = Cache::remember($chaveCache, now()->addMinutes(3), function () use ($usuario) {
+            $tarefas = app(DashboardController::class)->coletarTarefasUsuario($usuario);
+
+            $itens = $tarefas
+                ->filter(fn ($t) => $this->tarefaEhDoUsuario($t))
+                ->map(fn ($t) => $this->montarItemAssistente($t))
+                ->sortBy([['prioridade', 'asc'], ['dias', 'asc'], ['dias_parado', 'desc']])
+                ->values();
+
+            return [
+                'itens' => $itens->all(),
+                'gerado_em' => now()->toIso8601String(),
+            ];
+        });
+
+        $itens = collect($dados['itens']);
+        $categorias = collect(self::CATEGORIAS_ASSISTENTE)
+            ->map(fn ($info, $chave) => $info + [
+                'chave' => $chave,
+                'total' => $itens->where('categoria', $chave)->count(),
+                'atrasados' => $itens->where('categoria', $chave)->whereIn('nivel', ['atrasado', 'parado'])->count(),
+            ])
+            ->filter(fn ($categoria) => $categoria['total'] > 0)
+            ->values();
+
+        $resumo = [
+            'total' => $itens->count(),
+            'atrasados' => $itens->where('nivel', 'atrasado')->count(),
+            'vencendo' => $itens->where('nivel', 'vencendo')->count(),
+            'parados' => $itens->where('nivel', 'parado')->count(),
+            'dias_para_parado' => self::DIAS_PARA_PARADO,
+        ];
+
+        $hora = (int) now()->format('H');
+        $saudacao = ($hora < 12 ? 'Bom dia' : ($hora < 18 ? 'Boa tarde' : 'Boa noite')) . ', ' . Str::of($usuario->nome)->before(' ')->title() . '!';
+
+        $partes = array_filter([
+            $resumo['atrasados'] ? "*{$resumo['atrasados']} " . ($resumo['atrasados'] === 1 ? 'atrasada' : 'atrasadas') . '*' : null,
+            $resumo['vencendo'] ? "*{$resumo['vencendo']} vencendo*" : null,
+            $resumo['parados'] ? "*{$resumo['parados']} " . ($resumo['parados'] === 1 ? 'parada' : 'paradas') . '* há mais de ' . self::DIAS_PARA_PARADO . ' dias' : null,
+        ]);
+        $listaPartes = count($partes) > 1
+            ? implode(', ', array_slice($partes, 0, -1)) . ' e ' . end($partes)
+            : (string) reset($partes);
+
+        $mensagem = match (true) {
+            $resumo['total'] === 0 => 'Tudo em dia! Você não tem demandas pendentes no momento. 🎉',
+            count($partes) > 0 => ($resumo['atrasados'] > 0 ? 'Atenção! ' : '') . "Você tem {$listaPartes}. "
+                . "Ao todo são {$resumo['total']} " . ($resumo['total'] === 1 ? 'pendência' : 'pendências') . ' para finalizar.',
+            default => "Você tem *{$resumo['total']} " . ($resumo['total'] === 1 ? 'pendência' : 'pendências') . '* para finalizar, nenhuma atrasada.',
+        };
+
+        return response()->json([
+            'saudacao' => $saudacao,
+            'mensagem' => $mensagem,
+            'resumo' => $resumo,
+            'categorias' => $categorias,
+            'itens' => $itens,
+            'atualizado_em' => \Carbon\Carbon::parse($dados['gerado_em'])->format('H:i'),
+            'url_todas' => route('admin.dashboard.todas-tarefas'),
+        ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    /** Assinaturas e rascunhos pendentes há esta quantidade de dias passam a ser cobrados como "parados". */
+    private const DIAS_PARA_PARADO = 5;
+
+    private const CATEGORIAS_ASSISTENTE = [
+        'os' => ['titulo' => 'Ordens de serviço', 'icone' => '🧾'],
+        'assinaturas' => ['titulo' => 'Documentos para assinar', 'icone' => '✍️'],
+        'rascunhos' => ['titulo' => 'Rascunhos para finalizar', 'icone' => '📝'],
+        'exigencias' => ['titulo' => 'Exigências para elaborar', 'icone' => '📋'],
+        'respostas' => ['titulo' => 'Respostas para analisar', 'icone' => '📨'],
+        'prazos' => ['titulo' => 'Prazos de documentos', 'icone' => '⏳'],
+    ];
+
+    /**
+     * Mesmo recorte do card "Minhas demandas" do dashboard (sem as demandas gerais do setor).
+     */
+    private function tarefaEhDoUsuario(array $tarefa): bool
+    {
+        return match ($tarefa['tipo'] ?? null) {
+            'os', 'assinatura', 'rascunho', 'rascunho_lote', 'exigencia' => true,
+            'resposta' => (bool) ($tarefa['assinou_documento'] ?? false),
+            'prazo_documento' => ($tarefa['grupo'] ?? null) === 'para_mim',
+            default => false,
+        };
+    }
+
+    private function montarItemAssistente(array $tarefa): array
+    {
+        $tipo = $tarefa['tipo'];
+        $dias = isset($tarefa['dias_restantes']) && $tarefa['dias_restantes'] !== null ? (int) $tarefa['dias_restantes'] : null;
+        $atrasado = (bool) ($tarefa['atrasado'] ?? false);
+        $nivel = $atrasado ? 'atrasado' : 'normal';
+        $situacao = null;
+        $categoria = match ($tipo) {
+            'os' => !empty($tarefa['aguardando_assinatura_gestor']) ? 'assinaturas' : 'os',
+            'assinatura' => 'assinaturas',
+            'rascunho', 'rascunho_lote' => 'rascunhos',
+            'exigencia' => 'exigencias',
+            'resposta' => 'respostas',
+            default => 'prazos',
+        };
+
+        $prazoTexto = function (?int $dias) {
+            if ($dias === null) {
+                return null;
+            }
+            if ($dias < 0) {
+                return 'Atrasado há ' . abs($dias) . ' ' . Str::plural('dia', abs($dias));
+            }
+
+            return $dias === 0 ? 'Vence hoje' : ($dias === 1 ? 'Vence amanhã' : "Vence em {$dias} dias");
+        };
+
+        switch ($tipo) {
+            case 'os':
+                if (!empty($tarefa['aguardando_assinatura_gestor'])) {
+                    $situacao = 'Aguardando sua assinatura como gestor';
+                } elseif ($atrasado) {
+                    $situacao = 'Finalização atrasada (prazo era ' . ($tarefa['prazo_finalizacao_formatado'] ?? '-') . ')';
+                    $dias = $tarefa['dias_para_finalizar'] ?? $dias;
+                } elseif (!empty($tarefa['em_finalizacao'])) {
+                    $dias = $tarefa['dias_para_finalizar'] ?? null;
+                    $situacao = 'Finalize até ' . ($tarefa['prazo_finalizacao_formatado'] ?? '-');
+                    $nivel = $dias !== null && $dias <= 3 ? 'vencendo' : 'normal';
+                } elseif (!empty($tarefa['data_fim_formatada'])) {
+                    $situacao = 'Execução até ' . $tarefa['data_fim_formatada'];
+                }
+                break;
+            case 'assinatura':
+            case 'rascunho':
+            case 'rascunho_lote':
+                $diasPendente = (int) ($tarefa['dias_pendente'] ?? 0);
+                $dias = null;
+                if ($diasPendente >= self::DIAS_PARA_PARADO) {
+                    $nivel = 'parado';
+                    $situacao = ($tipo === 'assinatura' ? 'Aguardando sua assinatura há ' : 'Rascunho parado há ')
+                        . $diasPendente . ' ' . Str::plural('dia', $diasPendente);
+                } else {
+                    $situacao = $tarefa['subtitulo'] ?? null;
+                }
+                break;
+            case 'resposta':
+                $situacao = ($prazoTexto($dias) ?? 'Aguardando análise')
+                    . (!empty($tarefa['prazo_analise_data_limite']) ? ' · prazo ' . $tarefa['prazo_analise_data_limite'] : '');
+                break;
+            default:
+                $situacao = $tarefa['prazo_texto'] ?? $prazoTexto($dias);
+        }
+
+        if ($nivel === 'normal' && $dias !== null && $dias >= 0 && $dias <= 2 && in_array($tipo, ['exigencia', 'resposta', 'prazo_documento'], true)) {
+            $nivel = 'vencendo';
+        }
+
+        $subtitulo = in_array($tipo, ['assinatura', 'rascunho', 'rascunho_lote'], true) ? null : ($tarefa['subtitulo'] ?? null);
+
+        return [
+            'categoria' => $categoria,
+            'titulo' => $this->sanitizeUtf8((string) ($tarefa['titulo'] ?? 'Demanda')),
+            'subtitulo' => $subtitulo ? $this->sanitizeUtf8($subtitulo) : null,
+            'situacao' => $situacao ? $this->sanitizeUtf8($situacao) : null,
+            'url' => $tarefa['url'] ?? null,
+            'nivel' => $nivel,
+            'dias' => $dias,
+            'prioridade' => ['atrasado' => 0, 'vencendo' => 1, 'parado' => 2, 'normal' => 3][$nivel],
+            'dias_parado' => (int) ($tarefa['dias_pendente'] ?? 0),
+        ];
     }
 
     /**

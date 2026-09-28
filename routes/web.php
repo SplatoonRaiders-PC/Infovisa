@@ -264,6 +264,7 @@ Route::middleware(['auth:interno', 'no-cache-auth'])->prefix('admin')->name('adm
         Route::delete('/mensagem/{mensagemId}', [\App\Http\Controllers\ChatInternoController::class, 'apagarMensagem'])->name('mensagem.apagar');
         Route::get('/suporte/mensagens', [\App\Http\Controllers\ChatInternoController::class, 'suporteMensagens'])->name('suporte.mensagens');
         Route::get('/suporte/nao-lidos', [\App\Http\Controllers\ChatInternoController::class, 'suporteNaoLidos'])->name('suporte.nao-lidos');
+        Route::get('/assistente', [\App\Http\Controllers\ChatInternoController::class, 'assistente'])->name('assistente');
     });
 
     // Atalhos Rápidos

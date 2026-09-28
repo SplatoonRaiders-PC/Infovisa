@@ -1035,6 +1035,28 @@ class DashboardController extends Controller
         $usuario = Auth::guard('interno')->user();
         $page = $request->get('page', 1);
         $perPage = max(1, min((int) $request->get('per_page', 20), 200));
+        $todasTarefas = $this->coletarTarefasUsuario($usuario);
+
+        $total = $todasTarefas->count();
+        $lastPage = ceil($total / $perPage);
+        $tarefasPaginadas = $todasTarefas->forPage($page, $perPage)->values();
+
+        return response()->json([
+            'data' => $tarefasPaginadas,
+            'current_page' => (int) $page,
+            'last_page' => $lastPage,
+            'total' => $total,
+            'per_page' => $perPage,
+        ]);
+    }
+
+    /**
+     * Todas as tarefas de "Minhas demandas" do usuário (OS, assinaturas, rascunhos, exigências,
+     * prazos de documentos, respostas e aprovações), atrasadas primeiro.
+     * Usado pelo dashboard e pelo Assistente de Pendências do Chat Interno.
+     */
+    public function coletarTarefasUsuario(UsuarioInterno $usuario): \Illuminate\Support\Collection
+    {
         $tarefasPrazo = $this->buscarTarefasDocumentosComPrazo($usuario);
         $tarefasExigenciasColaborativas = $this->buscarTarefasExigenciasColaborativas($usuario);
 
@@ -1268,6 +1290,7 @@ class DashboardController extends Controller
                 'badge' => null,
                 'atrasado' => false,
                 'is_lote' => $isLote,
+                'dias_pendente' => (int) $ass->created_at->diffInDays(now()),
                 'ordem' => 1, // SEGUNDA PRIORIDADE - Assinaturas
             ]);
         }
@@ -1287,6 +1310,7 @@ class DashboardController extends Controller
                 'badge' => 'Rascunho',
                 'atrasado' => false,
                 'is_lote' => false,
+                'dias_pendente' => (int) $ass->created_at->diffInDays(now()),
                 'ordem' => 1,
             ]);
         }
@@ -1310,6 +1334,7 @@ class DashboardController extends Controller
                 'badge' => 'Rascunho',
                 'atrasado' => false,
                 'is_lote' => true,
+                'dias_pendente' => (int) $docLote->created_at->diffInDays(now()),
                 'ordem' => 1, // Mesma prioridade que assinaturas
             ]);
         }
@@ -1380,22 +1405,10 @@ class DashboardController extends Controller
         }
 
         // Ordenar: atrasados primeiro, depois por ordem
-        $todasTarefas = $todasTarefas->sortBy([
+        return $todasTarefas->sortBy([
             ['atrasado', 'desc'],
             ['ordem', 'asc'],
-        ]);
-
-        $total = $todasTarefas->count();
-        $lastPage = ceil($total / $perPage);
-        $tarefasPaginadas = $todasTarefas->forPage($page, $perPage)->values();
-
-        return response()->json([
-            'data' => $tarefasPaginadas,
-            'current_page' => (int) $page,
-            'last_page' => $lastPage,
-            'total' => $total,
-            'per_page' => $perPage,
-        ]);
+        ])->values();
     }
 
     /**
