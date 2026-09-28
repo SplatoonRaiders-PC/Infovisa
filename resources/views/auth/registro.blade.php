@@ -496,7 +496,8 @@ function registroForm() {
             this.consultando = true;
 
             try {
-                const response = await fetch('/api/consultar-cpf', {
+                // url(): respeita o APP_URL (subpasta /infovisacore em produção)
+                const response = await fetch(@js(url('/api/consultar-cpf')), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -516,6 +517,11 @@ function registroForm() {
                 }
 
                 const data = await response.json().catch(() => ({}));
+
+                // Erro do servidor (404, 500...) não significa CPF inválido: trata como falha de verificação
+                if (!response.ok && response.status !== 422) {
+                    throw new Error('Falha ao consultar CPF (HTTP ' + response.status + ')');
+                }
 
                 if (!response.ok || !data.valido) {
                     this.cpfStatus = 'invalido';
