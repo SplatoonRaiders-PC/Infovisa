@@ -300,7 +300,10 @@
             </div>
             <div class="flex gap-1 overflow-x-auto -mb-px">
                 @foreach($situacoes as $chave => $sit)
-                    @php $ativa = ($filtros['situacao'] ?? null) === ($chave ?: null); @endphp
+                    @php
+                        $ativa = ($filtros['situacao'] ?? null) === ($chave ?: null)
+                            || ($chave === 'doc_completa' && str_starts_with((string) ($filtros['situacao'] ?? ''), 'completa_'));
+                    @endphp
                     <a href="{{ $urlSituacao($chave ?: null) }}"
                        class="whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border-b-2 transition {{ $ativa ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800' }}">
                         {{ $sit['label'] }}
@@ -309,6 +312,32 @@
                 @endforeach
             </div>
         </div>
+
+        @if($tipoFoco === 'licenciamento')
+            @php
+                $subParecer = [
+                    'completa_favoravel' => ['label' => 'Parecer favorável', 'total' => $indicadores['completa_favoravel'], 'cor' => 'emerald', 'dica' => 'Último parecer favorável, sem notificação em aberto'],
+                    'completa_pendencia' => ['label' => 'Parecer desfavorável / notificação em prazo', 'total' => $indicadores['completa_pendencia'], 'cor' => 'red', 'dica' => 'Último parecer desfavorável ou notificação com prazo em aberto'],
+                    'completa_sem_parecer' => ['label' => 'Aguardando parecer', 'total' => $indicadores['completa_sem_parecer'], 'cor' => 'slate', 'dica' => 'Documentação completa, ainda sem parecer'],
+                ];
+                $corChip = [
+                    'emerald' => ['on' => 'bg-emerald-600 text-white ring-emerald-600', 'off' => 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100'],
+                    'red' => ['on' => 'bg-red-600 text-white ring-red-600', 'off' => 'bg-red-50 text-red-700 ring-red-200 hover:bg-red-100'],
+                    'slate' => ['on' => 'bg-slate-700 text-white ring-slate-700', 'off' => 'bg-slate-50 text-slate-600 ring-slate-200 hover:bg-slate-100'],
+                ];
+            @endphp
+            <div class="px-5 py-2.5 border-b border-slate-100 bg-slate-50/60 flex flex-wrap items-center gap-2">
+                <span class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mr-1">Doc. completa sem alvará:</span>
+                @foreach($subParecer as $chave => $sub)
+                    @php $ativaSub = ($filtros['situacao'] ?? null) === $chave; @endphp
+                    <a href="{{ $urlSituacao($chave) }}" title="{{ $sub['dica'] }}"
+                       class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold ring-1 ring-inset transition {{ $ativaSub ? $corChip[$sub['cor']]['on'] : $corChip[$sub['cor']]['off'] }}">
+                        {{ $sub['label'] }}
+                        <span class="px-1.5 rounded-full text-[10px] tabular-nums {{ $ativaSub ? 'bg-white/20' : 'bg-white' }}">{{ $fmt($sub['total']) }}</span>
+                    </a>
+                @endforeach
+            </div>
+        @endif
 
         @if($estabelecimentos->isEmpty())
             <div class="px-5 py-14 text-center">
@@ -399,7 +428,12 @@
                                 };
                             @endphp
                             @if(isset($linha['etapa']))
-                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset whitespace-nowrap {{ $etapaClasse[$linha['etapa']] ?? $sitClasse }}">{{ $linha['etapa_label'] }}</span>
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset whitespace-nowrap {{ $etapaClasse[$linha['etapa']] ?? $sitClasse }}">{{ isset($linha['sub_etapa']) ? 'Doc. completa · sem alvará' : $linha['etapa_label'] }}</span>
+                            @isset($linha['sub_etapa'])
+                                <p class="mt-1 text-[11px] font-semibold {{ ['completa_favoravel' => 'text-emerald-700', 'completa_pendencia' => 'text-red-700', 'completa_sem_parecer' => 'text-slate-500'][$linha['sub_etapa']] ?? 'text-slate-500' }}">
+                                    {{ $linha['sub_etapa_label'] }}
+                                </p>
+                            @endisset
                             @else
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset {{ $sitClasse }}">{{ $linha['situacao_label'] }}</span>
                             @endif

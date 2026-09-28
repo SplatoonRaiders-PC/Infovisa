@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Estabelecimento;
 use App\Models\Municipio;
 use App\Models\Processo;
+use App\Models\TipoDocumento;
 use App\Models\TipoProcesso;
 use App\Models\UsuarioInterno;
 use Illuminate\Http\Request;
@@ -130,7 +131,7 @@ class RelatorioEstabelecimentoController extends Controller
                 ? $request->input('competencia') : null,
             'municipio_id' => $podeFiltrarMunicipio && $request->filled('municipio_id') ? $request->integer('municipio_id') : null,
             'tipo' => in_array($request->input('tipo'), self::TIPOS_CONTROLADOS, true) ? $request->input('tipo') : null,
-            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'com_alvara', 'doc_completa', 'doc_incompleta'], true)
+            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'com_alvara', 'doc_completa', 'doc_incompleta', 'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer'], true)
                 ? $request->input('situacao') : null,
             'status_estabelecimento' => $request->input('status_estabelecimento', 'aprovado') === 'todos' ? 'todos' : 'aprovado',
             'busca' => trim((string) $request->input('busca')),
@@ -237,7 +238,7 @@ class RelatorioEstabelecimentoController extends Controller
             $semAlvara->load(['documentos', 'pastas', 'unidades']);
         }
 
-        return $linhas->map(function ($linha) use ($tipo, $comAlvara) {
+        $linhas = $linhas->map(function ($linha) use ($tipo, $comAlvara) {
             $processo = $linha['demandas'][$tipo]['processo'] ?? null;
 
             if (!$processo) {
@@ -258,6 +259,90 @@ class RelatorioEstabelecimentoController extends Controller
                 'doc_completa' => $tipo === 'licenciamento' ? 'Doc. completa · sem alvará' : 'Doc. completa',
                 'doc_incompleta' => 'Doc. incompleta',
             ][$etapa];
+
+            return $linha;
+        });
+
+        return $tipo === 'licenciamento' ? $this->classificarParecer($linhas) : $linhas;
+    }
+
+    /**
+     * Licenciamento com documentação completa e sem alvará: situação do parecer
+     * (considerando só documentos ASSINADOS do processo do ano):
+     *  - completa_pendencia   → último parecer é desfavorável/indeferido OU há notificação com prazo em aberto
+     *  - completa_favoravel   → último parecer é favorável (e sem notificação em aberto)
+     *  - completa_sem_parecer → nenhum parecer e nenhuma notificação em aberto
+     *
+     * Os tipos são identificados pelo nome (os códigos variam entre ambientes). Compara pelo INÍCIO
+     * do nome, pois "desfavorável" também contém "favor".
+     */
+    private function classificarParecer(Collection $linhas): Collection
+    {
+        $processos = $linhas->where('etapa', 'doc_completa')
+            ->map(fn ($l) => $l['demandas']['licenciamento']['processo'] ?? null)
+            ->filter();
+
+        if ($processos->isEmpty()) {
+            return $linhas;
+        }
+
+        $tiposFavoravel = TipoDocumento::query()->where('nome', 'ilike', 'parecer favor%')->pluck('id')->all();
+        $tiposDesfavoravel = TipoDocumento::query()
+            ->where(fn ($q) => $q->where('nome', 'ilike', 'parecer desfavor%')
+                ->orWhere('nome', 'ilike', 'parecer indeferido%')
+                ->orWhere('codigo', 'parecer-indeferido'))
+            ->pluck('id')->all();
+        $tiposNotificacao = TipoDocumento::query()
+            ->where(fn ($q) => $q->where('codigo', 'notificacao')->orWhere('nome', 'ilike', 'notifica%'))
+            ->pluck('id')->all();
+
+        $documentos = \App\Models\DocumentoDigital::query()
+            ->whereIn('processo_id', $processos->pluck('id'))
+            ->where('status', 'assinado')
+            ->whereIn('tipo_documento_id', array_merge($tiposFavoravel, $tiposDesfavoravel, $tiposNotificacao))
+            ->get(['id', 'processo_id', 'tipo_documento_id', 'finalizado_em', 'created_at', 'prazo_finalizado_em', 'data_vencimento'])
+            ->groupBy('processo_id');
+
+        return $linhas->map(function ($linha) use ($documentos, $tiposFavoravel, $tiposDesfavoravel, $tiposNotificacao) {
+            if (($linha['etapa'] ?? null) !== 'doc_completa') {
+                return $linha;
+            }
+
+            $docs = $documentos->get($linha['demandas']['licenciamento']['processo']->id, collect());
+
+            $ultimoParecer = $docs
+                ->filter(fn ($d) => in_array($d->tipo_documento_id, array_merge($tiposFavoravel, $tiposDesfavoravel), true))
+                ->sortByDesc(fn ($d) => $d->finalizado_em ?? $d->created_at)
+                ->first();
+
+            $notificacaoAberta = $docs
+                ->filter(fn ($d) => in_array($d->tipo_documento_id, $tiposNotificacao, true) && is_null($d->prazo_finalizado_em))
+                ->sortBy(fn ($d) => $d->data_vencimento ?? $d->created_at)
+                ->first();
+
+            $desfavoravel = $ultimoParecer && in_array($ultimoParecer->tipo_documento_id, $tiposDesfavoravel, true);
+
+            if ($desfavoravel || $notificacaoAberta) {
+                $sub = 'completa_pendencia';
+                $motivos = [];
+                if ($desfavoravel) {
+                    $motivos[] = 'Parecer desfavorável';
+                }
+                if ($notificacaoAberta) {
+                    $motivos[] = 'Notificação em prazo' . ($notificacaoAberta->data_vencimento ? ' (até ' . $notificacaoAberta->data_vencimento->format('d/m/Y') . ')' : '');
+                }
+                $detalhe = implode(' · ', $motivos);
+            } elseif ($ultimoParecer) {
+                $sub = 'completa_favoravel';
+                $detalhe = 'Parecer favorável';
+            } else {
+                $sub = 'completa_sem_parecer';
+                $detalhe = 'Aguardando parecer';
+            }
+
+            $linha['sub_etapa'] = $sub;
+            $linha['sub_etapa_label'] = $detalhe;
+            $linha['etapa_label'] = 'Doc. completa · ' . mb_strtolower($detalhe);
 
             return $linha;
         });
@@ -367,6 +452,7 @@ class RelatorioEstabelecimentoController extends Controller
                         'sem_ativo' => $l['processos_ativos']->isEmpty(),
                         'sem_exigencia' => $l['situacao'] === 'sem_exigencia',
                         'com_alvara', 'doc_completa', 'doc_incompleta' => ($l['etapa'] ?? null) === $filtros['situacao'],
+                        'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer' => ($l['sub_etapa'] ?? null) === $filtros['situacao'],
                         default => true,
                     };
                 });
@@ -410,6 +496,10 @@ class RelatorioEstabelecimentoController extends Controller
             'com_alvara' => $linhas->where('etapa', 'com_alvara')->count(),
             'doc_completa' => $linhas->where('etapa', 'doc_completa')->count(),
             'doc_incompleta' => $linhas->where('etapa', 'doc_incompleta')->count(),
+            // Licenciamento com doc. completa: situação do parecer
+            'completa_favoravel' => $linhas->where('sub_etapa', 'completa_favoravel')->count(),
+            'completa_pendencia' => $linhas->where('sub_etapa', 'completa_pendencia')->count(),
+            'completa_sem_parecer' => $linhas->where('sub_etapa', 'completa_sem_parecer')->count(),
             'estadual' => $linhas->where('competencia', 'estadual')->count(),
             'municipal' => $linhas->where('competencia', 'municipal')->count(),
             'ano' => $filtros['ano'],
