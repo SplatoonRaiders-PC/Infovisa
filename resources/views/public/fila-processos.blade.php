@@ -218,6 +218,7 @@
                         <h4 class="text-sm font-bold text-slate-900">Como funciona a fila?</h4>
                         <p class="text-xs text-slate-600 leading-relaxed mt-0.5">
                             O processo entra na fila <strong>após todos os documentos obrigatórios serem enviados e aprovados</strong>.
+                            Cada unidade é avaliada separadamente: pendências em outras unidades ou na parte principal não impedem sua entrada na fila.
                             O prazo conta a partir da aprovação do último documento obrigatório ou do reinício do processo/unidade, e fica <strong>suspenso</strong> enquanto o processo ou a unidade estiver parado.
                         </p>
                     </div>
@@ -249,7 +250,7 @@
                             @if($fila['prazo_analise'])
                             <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 ring-1 ring-blue-200">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                Prazo: {{ $fila['prazo_analise'] }} dias
+                                Prazo padrão: {{ $fila['prazo_analise'] }} dias · varia por risco
                             </span>
                             @endif
                             @if($atrasadosTipo > 0)
@@ -315,6 +316,8 @@
                                                 <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
                                                 <span class="font-semibold">{{ $uPrazo['nome'] }}</span>
                                                 <span class="opacity-40">|</span>
+                                                <span>Prazo: {{ $uPrazo['prazo'] }} dias</span>
+                                                <span class="opacity-40">|</span>
                                                 <span>{{ $textoU }}</span>
                                                 @if(!empty($uPrazo['prazo_reiniciado']))
                                                 <span class="opacity-70">• reiniciado {{ $uPrazo['data_referencia_prazo'] }}</span>
@@ -332,6 +335,9 @@
                                     </td>
                                     <td class="px-5 py-3.5 whitespace-nowrap">
                                         <p class="text-xs text-slate-700">{{ $processo['data_referencia_prazo'] }}</p>
+                                        @if($processo['unidade_referencia'])
+                                            <p class="text-[11px] text-slate-500 mt-0.5">Unidade: {{ $processo['unidade_referencia'] }}</p>
+                                        @endif
                                         @if($processo['prazo_reiniciado'])
                                             <p class="text-[11px] font-medium text-blue-600 mt-0.5">Prazo reiniciado</p>
                                         @endif
@@ -346,6 +352,9 @@
                                     </td>
                                     @if($fila['prazo_analise'])
                                     <td class="px-5 py-3.5 whitespace-nowrap">
+                                        @if($processo['prazo'])
+                                            <p class="text-[11px] text-slate-500 mb-1">Prazo: {{ $processo['prazo'] }} dias</p>
+                                        @endif
                                         @if($processo['pausado'] && $processo['dias_restantes'] !== null && $processo['dias_restantes'] < 0)
                                             <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 ring-1 ring-amber-200">
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -384,7 +393,7 @@
                     </div>
 
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 text-[11px] text-slate-500">
-                        <span><strong class="text-slate-700">Total:</strong> {{ count($fila['processos']) }} processo(s) com documentação completa</span>
+                        <span><strong class="text-slate-700">Total:</strong> {{ count($fila['processos']) }} processo(s) com documentação completa na parte principal ou em pelo menos uma unidade</span>
                         <span>Unidades com prazo próprio aparecem abaixo do estabelecimento</span>
                     </div>
                 </div>
@@ -418,7 +427,7 @@
                 </div>
                 <h3 class="text-base font-semibold text-slate-900 mb-1">Nenhum processo na fila</h3>
                 <p class="text-xs text-slate-500 max-w-md mx-auto mb-6">
-                    Não há processos com documentação completa no momento. Processos aparecerão aqui quando todos os documentos obrigatórios forem enviados e aprovados.
+                    Não há processos ou unidades com documentação completa no momento. Eles aparecerão aqui quando seus documentos obrigatórios forem enviados e aprovados.
                 </p>
                 <a href="{{ route('home') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-800 transition">
                     Voltar para Home

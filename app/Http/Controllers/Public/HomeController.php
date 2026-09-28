@@ -37,7 +37,7 @@ class HomeController extends Controller
         foreach ($tiposComFilaPublica as $tipo) {
             $processos = Processo::where('tipo', $tipo->codigo)
                 ->whereIn('status', ['aberto', 'em_analise', 'pendente', 'parado'])
-                ->with(['estabelecimento:id,nome_fantasia,razao_social,cnpj,cpf,nome_completo,atividades_exercidas,tipo_setor,municipio_id', 'unidades', 'pastas', 'documentos'])
+                ->with(['estabelecimento', 'tipoProcesso', 'unidades', 'pastas', 'documentos'])
                 ->orderBy('created_at', 'asc') // Mais antigo primeiro
                 ->get();
 
@@ -57,46 +57,9 @@ class HomeController extends Controller
                 // Verifica se todos os documentos obrigatórios estão aprovados
                 $statusDocs = $this->verificarDocumentosObrigatorios($processo, $tipo);
 
-                if ($statusDocs['completo']) {
-                    $dataDocumentosCompletos = $statusDocs['data_ultimo_aprovado'] ?? $processo->created_at;
-                    $dataRef = $processo->getDataReferenciaFilaPublica($dataDocumentosCompletos);
-                    $hoje = Carbon::now();
-                    $tempoTotalSegundos = max(0, $dataRef->diffInSeconds($hoje) - $processo->getTempoTotalParadoConsiderandoParadaAtual());
-                    
-                    // Considera apenas o tempo efetivo em fila, desconsiderando períodos parados.
-                    $dias = intdiv($tempoTotalSegundos, 86400);
-                    $horas = intdiv($tempoTotalSegundos % 86400, 3600);
-                    
-                    // Calcula prazo restante
-                    $grupoRisco = $processo->estabelecimento ? $processo->estabelecimento->getGrupoRisco() : null;
-                    $prazo = $tipo->getPrazoFilaPublicaPorRisco($grupoRisco);
-                    if ($prazo) {
-                        $dataLimite = $processo->calcularDataLimiteFilaPublica($dataRef, $prazo);
-                        $diasRestantes = (int) round(Carbon::now()->diffInDays($dataLimite, false));
-                    } else {
-                        $diasRestantes = null;
-                    }
-                    
-                    $processosAptos[] = [
-                        'numero_processo' => $processo->numero_processo,
-                        'estabelecimento' => $processo->estabelecimento ? 
-                            ($processo->estabelecimento->nome_fantasia ?? $processo->estabelecimento->nome_completo ?? 'Não informado') : 
-                            'Não vinculado',
-                        'status' => $processo->status,
-                        'data_abertura' => Carbon::parse($processo->created_at)->format('d/m/Y H:i'),
-                        'data_documentos_completos' => Carbon::parse($dataDocumentosCompletos)->format('d/m/Y H:i'),
-                        'data_referencia_prazo' => $dataRef->format('d/m/Y H:i'),
-                        'dias_decorridos' => $dias,
-                        'horas_decorridas' => $horas,
-                        'tempo_formatado' => $dias > 0 ? "{$dias}d {$horas}h" : "{$horas}h",
-                        'prazo' => $prazo,
-                        'dias_restantes' => $diasRestantes,
-                        'atrasado' => $prazo ? $diasRestantes < 0 : false,
-                        'pausado' => $processo->status === 'parado',
-                        'prazo_reiniciado' => $processo->prazoFilaPublicaFoiReiniciado($dataDocumentosCompletos),
-                        'data_referencia_prazo_sort' => $dataRef->timestamp,
-                        'unidades_prazo' => $this->calcularPrazosUnidades($processo, $tipo, $prazo),
-                    ];
+                $entrada = $this->montarEntradaFila($processo, $tipo, $statusDocs);
+                if ($entrada !== null) {
+                    $processosAptos[] = $entrada;
                 }
             }
 
@@ -104,10 +67,11 @@ class HomeController extends Controller
             usort($processosAptos, function($a, $b) {
                 return $a['data_referencia_prazo_sort'] <=> $b['data_referencia_prazo_sort'];
             });
-            
+
             foreach ($processosAptos as $index => &$proc) {
                 $proc['posicao'] = $index + 1;
             }
+            unset($proc);
 
             if (count($processosAptos) > 0) {
                 $filaProcessos[] = [
@@ -123,9 +87,78 @@ class HomeController extends Controller
     }
 
     /**
+     * Uma unidade apta entra na fila mesmo com pendências na raiz ou em outras unidades.
+     */
+    private function montarEntradaFila(Processo $processo, TipoProcesso $tipo, array $statusDocs): ?array
+    {
+        $grupoRisco = $processo->estabelecimento?->getGrupoRisco();
+        $prazo = $tipo->getPrazoFilaPublicaPorRisco($grupoRisco);
+        $unidadesPrazo = $this->calcularPrazosUnidades($processo, $prazo);
+
+        if (!$statusDocs['completo'] && empty($unidadesPrazo)) {
+            return null;
+        }
+
+        $unidadeReferencia = null;
+        if (!$statusDocs['completo']) {
+            // Representa a unidade em análise mais antiga; se todas estão suspensas,
+            // usa a mais antiga delas. Nunca cria um prazo fictício para a raiz.
+            $unidades = collect($unidadesPrazo)->sortBy('data_referencia_prazo_sort');
+            $unidadeReferencia = $unidades->firstWhere('pausado', false) ?? $unidades->first();
+        }
+
+        if ($unidadeReferencia) {
+            $dataDocumentosCompletos = $unidadeReferencia['data_documentos_completos'];
+            $dataRef = $unidadeReferencia['referencia']->copy();
+            $tempoTotalSegundos = $unidadeReferencia['tempo_segundos'];
+            $diasRestantes = $unidadeReferencia['dias_restantes'];
+            $pausado = $unidadeReferencia['pausado'];
+            $reiniciado = $unidadeReferencia['prazo_reiniciado'];
+        } else {
+            $dataDocumentosCompletos = $statusDocs['data_ultimo_aprovado'] ?? $processo->created_at;
+            $dataRef = $processo->getDataReferenciaFilaPublica($dataDocumentosCompletos);
+            $hoje = Carbon::now();
+            $tempoTotalSegundos = max(0, $dataRef->diffInSeconds($hoje) - $processo->getTempoTotalParadoConsiderandoParadaAtual());
+            if ($prazo) {
+                $dataLimite = $processo->calcularDataLimiteFilaPublica($dataRef, $prazo);
+                $diasRestantes = (int) round($hoje->diffInDays($dataLimite, false));
+            } else {
+                $diasRestantes = null;
+            }
+            $pausado = $processo->status === 'parado';
+            $reiniciado = $processo->prazoFilaPublicaFoiReiniciado($dataDocumentosCompletos);
+        }
+
+        $dias = intdiv((int) $tempoTotalSegundos, 86400);
+        $horas = intdiv((int) $tempoTotalSegundos % 86400, 3600);
+
+        return [
+            'numero_processo' => $processo->numero_processo,
+            'estabelecimento' => $processo->estabelecimento
+                ? ($processo->estabelecimento->nome_fantasia ?? $processo->estabelecimento->nome_completo ?? 'Não informado')
+                : 'Não vinculado',
+            'status' => $processo->status,
+            'data_abertura' => Carbon::parse($processo->created_at)->format('d/m/Y H:i'),
+            'data_documentos_completos' => Carbon::parse($dataDocumentosCompletos)->format('d/m/Y H:i'),
+            'data_referencia_prazo' => $dataRef->format('d/m/Y H:i'),
+            'dias_decorridos' => $dias,
+            'horas_decorridas' => $horas,
+            'tempo_formatado' => $dias > 0 ? "{$dias}d {$horas}h" : "{$horas}h",
+            'prazo' => $prazo,
+            'dias_restantes' => $diasRestantes,
+            'atrasado' => $prazo ? $diasRestantes < 0 : false,
+            'pausado' => $pausado,
+            'prazo_reiniciado' => $reiniciado,
+            'data_referencia_prazo_sort' => $dataRef->timestamp,
+            'unidade_referencia' => $unidadeReferencia['nome'] ?? null,
+            'unidades_prazo' => $unidadesPrazo,
+        ];
+    }
+
+    /**
      * Calcula prazos por unidade para um processo
      */
-    private function calcularPrazosUnidades($processo, $tipoProcesso, $prazo)
+    private function calcularPrazosUnidades($processo, $prazo)
     {
         $unidadesPrazo = [];
         // Pastas de unidade ainda não concluídas (mesma regra da tela do processo)
@@ -135,8 +168,6 @@ class HomeController extends Controller
             ->sortBy('ordem');
         if ($pastasUnidade->isEmpty() || !$prazo) return $unidadesPrazo;
 
-        // O checklist precisa do estabelecimento completo (a fila carrega só algumas colunas)
-        $processo->load(['estabelecimento', 'tipoProcesso']);
         $checklist = $processo->getDocumentosObrigatoriosChecklist();
 
         foreach ($pastasUnidade as $pasta) {
@@ -149,6 +180,11 @@ class HomeController extends Controller
 
             $unidadesPrazo[] = [
                 'nome' => $pasta->nome,
+                'prazo' => $prazo,
+                'data_documentos_completos' => $dataDocsCompletos,
+                'referencia' => $prazoUnidade['data_referencia_prazo'],
+                'data_referencia_prazo_sort' => $prazoUnidade['data_referencia_prazo']->timestamp,
+                'tempo_segundos' => max(0, (int) ($prazo * 86400 - now()->diffInSeconds($prazoUnidade['data_limite'], false))),
                 'data_referencia_prazo' => $prazoUnidade['data_referencia_prazo']->format('d/m/Y'),
                 'dias_restantes' => $prazoUnidade['dias_restantes'],
                 'atrasado' => $prazoUnidade['atrasado'],
@@ -333,4 +369,3 @@ class HomeController extends Controller
         return redirect()->back()->with('success', 'Documento verificado com sucesso!');
     }
 }
-
