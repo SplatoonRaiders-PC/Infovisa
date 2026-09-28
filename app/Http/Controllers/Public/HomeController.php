@@ -128,49 +128,32 @@ class HomeController extends Controller
     private function calcularPrazosUnidades($processo, $tipoProcesso, $prazo)
     {
         $unidadesPrazo = [];
-        // Considera todas as pastas, exceto as concluídas
-        $pastasUnidade = $processo->pastas->where('status', '!=', 'concluida');
+        // Pastas de unidade ainda não concluídas (mesma regra da tela do processo)
+        $pastasUnidade = $processo->pastas
+            ->whereNotNull('unidade_id')
+            ->where('status', '!=', 'concluida')
+            ->sortBy('ordem');
         if ($pastasUnidade->isEmpty() || !$prazo) return $unidadesPrazo;
 
-        // Busca os tipos de documento obrigatório do processo (mesma lógica do verificarDocumentosObrigatorios)
-        $tiposObrigatorios = $this->buscarTiposDocumentoObrigatorios($processo, $tipoProcesso);
+        // O checklist precisa do estabelecimento completo (a fila carrega só algumas colunas)
+        $processo->load(['estabelecimento', 'tipoProcesso']);
+        $checklist = $processo->getDocumentosObrigatoriosChecklist();
 
-        // Para cada pasta, verifica se TODOS os docs obrigatórios estão aprovados naquela pasta
         foreach ($pastasUnidade as $pasta) {
-            $docsAprovadosNaPasta = $processo->documentos
-                ->where('pasta_id', $pasta->id)
-                ->where('status_aprovacao', 'aprovado')
-                ->whereNotNull('tipo_documento_obrigatorio_id');
+            // Todos os obrigatórios aprovados na pasta da unidade (envio mais recente de cada um)
+            $dataDocsCompletos = $processo->getDataDocumentacaoCompletaPasta($pasta, $checklist);
+            if (!$dataDocsCompletos) continue;
 
-            if ($docsAprovadosNaPasta->isEmpty()) continue;
-
-            // Verifica se todos os tipos obrigatórios têm documento aprovado nesta pasta
-            if ($tiposObrigatorios->isNotEmpty()) {
-                $tiposAprovadosNaPasta = $docsAprovadosNaPasta->pluck('tipo_documento_obrigatorio_id')->unique();
-                $faltaAlgum = $tiposObrigatorios->pluck('id')->diff($tiposAprovadosNaPasta)->isNotEmpty();
-                if ($faltaAlgum) {
-                    // Tem doc obrigatório pendente/não aprovado nesta unidade — não conta para fila
-                    continue;
-                }
-            }
-
-            // Pega a data do último doc aprovado na pasta
-            $dataUltimoAprov = $docsAprovadosNaPasta
-                ->sortByDesc(fn ($d) => $d->aprovado_em ?? $d->updated_at)
-                ->first();
-            $dataRef = $dataUltimoAprov->aprovado_em ?? $dataUltimoAprov->updated_at;
-
-            if (!$dataRef) continue;
-
-            $dataRefPrazo = $processo->getDataReferenciaFilaPublica($dataRef);
-            $dataLimite = $processo->calcularDataLimiteFilaPublica($dataRef, $prazo);
-            $diasRestantes = (int) round(Carbon::now()->diffInDays($dataLimite, false));
+            // Congela o prazo se o processo OU a unidade estiver parado; respeita reinício da unidade
+            $prazoUnidade = $processo->calcularPrazoFilaPublicaUnidade($pasta, $dataDocsCompletos, (int) $prazo);
 
             $unidadesPrazo[] = [
                 'nome' => $pasta->nome,
-                'dias_restantes' => $diasRestantes,
-                'atrasado' => $diasRestantes < 0,
-                'pausado' => $processo->status === 'parado',
+                'data_referencia_prazo' => $prazoUnidade['data_referencia_prazo']->format('d/m/Y'),
+                'dias_restantes' => $prazoUnidade['dias_restantes'],
+                'atrasado' => $prazoUnidade['atrasado'],
+                'pausado' => $prazoUnidade['pausado'],
+                'prazo_reiniciado' => $prazoUnidade['prazo_reiniciado'],
             ];
         }
 
@@ -322,88 +305,6 @@ class HomeController extends Controller
             'completo' => $todosAprovados,
             'data_ultimo_aprovado' => $dataUltimoAprovado
         ];
-    }
-
-    /**
-     * Retorna a coleção de tipos de documento obrigatórios para um processo (sem checar aprovação).
-     * Reaproveita a mesma lógica de verificarDocumentosObrigatorios mas só retorna os tipos.
-     */
-    private function buscarTiposDocumentoObrigatorios($processo, $tipoProcesso)
-    {
-        $estabelecimento = $processo->estabelecimento;
-        $tipoProcessoId = $tipoProcesso->id ?? null;
-
-        if (!$tipoProcessoId || !$estabelecimento) {
-            return collect();
-        }
-
-        $isProcessoEspecial = in_array($tipoProcesso->codigo, ['projeto_arquitetonico', 'analise_rotulagem']);
-        $atividadesExercidas = $estabelecimento->atividades_exercidas ?? [];
-
-        if (!$isProcessoEspecial && empty($atividadesExercidas)) {
-            return collect();
-        }
-
-        $atividadeIds = collect();
-        if (!$isProcessoEspecial && !empty($atividadesExercidas)) {
-            $codigosCnae = collect($atividadesExercidas)->map(function($atividade) {
-                $codigo = is_array($atividade) ? ($atividade['codigo'] ?? null) : $atividade;
-                return $codigo ? preg_replace('/[^0-9]/', '', $codigo) : null;
-            })->filter()->values()->toArray();
-
-            if (!empty($codigosCnae)) {
-                $atividadeIds = Atividade::where('ativo', true)
-                    ->where(function($query) use ($codigosCnae) {
-                        foreach ($codigosCnae as $codigo) {
-                            $query->orWhere('codigo_cnae', $codigo);
-                        }
-                    })
-                    ->pluck('id');
-            }
-        }
-
-        $listasQuery = ListaDocumento::where('ativo', true)
-            ->where('tipo_processo_id', $tipoProcessoId)
-            ->with(['tiposDocumentoObrigatorio' => function($q) {
-                $q->orderBy('lista_documento_tipo.ordem');
-            }]);
-
-        if ($isProcessoEspecial) {
-            $listasQuery->whereDoesntHave('atividades');
-        } else {
-            if ($atividadeIds->isEmpty()) {
-                return collect();
-            }
-            $listasQuery->whereHas('atividades', function($q) use ($atividadeIds) {
-                $q->whereIn('atividades.id', $atividadeIds);
-            });
-        }
-
-        $listasQuery->where(function($q) use ($estabelecimento) {
-            $q->where('escopo', 'estadual');
-            if ($estabelecimento->municipio_id) {
-                $q->orWhere(function($q2) use ($estabelecimento) {
-                    $q2->where('escopo', 'municipal')
-                       ->where('municipio_id', $estabelecimento->municipio_id);
-                });
-            }
-        });
-
-        $listas = $listasQuery->get();
-
-        $docsObrigatorios = collect();
-        foreach ($listas as $lista) {
-            foreach ($lista->tiposDocumentoObrigatorio as $tipoDoc) {
-                $tipoSetorEnum = $estabelecimento->tipo_setor;
-                $tipoSetor = $tipoSetorEnum instanceof \App\Enums\TipoSetor ? $tipoSetorEnum->value : ($tipoSetorEnum ?? 'privado');
-
-                if ($tipoDoc->pivot->obrigatorio && $tipoDoc->aplicaAoTipoSetor($tipoSetor) && !$docsObrigatorios->contains('id', $tipoDoc->id)) {
-                    $docsObrigatorios->push($tipoDoc);
-                }
-            }
-        }
-
-        return $docsObrigatorios;
     }
 
     /**

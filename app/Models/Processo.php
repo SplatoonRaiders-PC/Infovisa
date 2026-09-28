@@ -130,19 +130,130 @@ class Processo extends Model
         return $dataReinicio !== null && $dataReinicio->greaterThan($dataBase);
     }
 
+    /**
+     * Tempo parado já encerrado (sem a parada em andamento).
+     */
+    public function getTempoParadoAcumulado(): int
+    {
+        if (!$this->prazo_fila_publica_reiniciado_em && $this->getPrazoFilaPublicaReiniciadoEmEfetivo()) {
+            return 0;
+        }
+
+        return (int) ($this->tempo_total_parado_segundos ?? 0);
+    }
+
     public function getTempoTotalParadoConsiderandoParadaAtual(): int
     {
-        $tempoTotal = (int) ($this->tempo_total_parado_segundos ?? 0);
-
-        if (!$this->prazo_fila_publica_reiniciado_em && $this->getPrazoFilaPublicaReiniciadoEmEfetivo()) {
-            $tempoTotal = 0;
-        }
+        $tempoTotal = $this->getTempoParadoAcumulado();
 
         if ($this->status === 'parado' && $this->data_parada) {
             $tempoTotal += $this->getSegundosParadaAtual();
         }
 
         return $tempoTotal;
+    }
+
+    /**
+     * Prazo da fila pública de uma pasta/unidade.
+     *
+     * Além das paradas do processo inteiro, considera as paradas da própria
+     * pasta/unidade (o prazo congela enquanto ela estiver parada) e o reinício
+     * do prazo feito só na unidade.
+     */
+    public function calcularPrazoFilaPublicaUnidade(ProcessoPasta $pasta, $dataDocumentosCompletos, int $prazoDias): array
+    {
+        $agora = now();
+        $dataBase = $dataDocumentosCompletos instanceof Carbon
+            ? $dataDocumentosCompletos->copy()
+            : Carbon::parse($dataDocumentosCompletos);
+
+        // Referência: a mais recente entre docs completos, reinício do processo e reinício da unidade
+        $referencia = $this->getDataReferenciaFilaPublica($dataBase);
+        $reinicioUnidade = $pasta->prazo_fila_publica_reiniciado_em;
+        $reiniciadoNaUnidade = $reinicioUnidade && $reinicioUnidade->greaterThan($referencia);
+        if ($reiniciadoNaUnidade) {
+            $referencia = $reinicioUnidade->copy();
+        }
+
+        // Vínculo da unidade (pivot) — usado quando a parada foi feita pela unidade e não pela pasta
+        $pivot = null;
+        if ($pasta->unidade_id) {
+            $unidades = $this->relationLoaded('unidades') ? $this->unidades : $this->unidades()->get();
+            $pivot = $unidades->firstWhere('id', $pasta->unidade_id)?->pivot;
+        }
+
+        // Paradas já encerradas
+        $segundosParados = (int) ($pasta->tempo_total_parado_segundos ?? 0)
+            + (int) ($pivot->tempo_total_parado_segundos ?? 0)
+            + ($reiniciadoNaUnidade ? 0 : $this->getTempoParadoAcumulado());
+
+        // Parada em andamento: conta uma vez só, mesmo que processo e unidade estejam parados juntos
+        $iniciosParada = collect([
+            $this->status === 'parado' ? $this->data_parada : null,
+            $pasta->isParada() ? $pasta->data_parada : null,
+            ($pivot && $pivot->status === 'parado' && $pivot->data_parada) ? Carbon::parse($pivot->data_parada) : null,
+        ])->filter();
+
+        $pausado = $this->status === 'parado' || $pasta->isParada() || ($pivot && $pivot->status === 'parado');
+
+        if ($iniciosParada->isNotEmpty()) {
+            $inicioParada = $iniciosParada->min();
+            if ($inicioParada->lessThan($referencia)) {
+                $inicioParada = $referencia->copy();
+            }
+            $segundosParados += max(0, $agora->getTimestamp() - $inicioParada->getTimestamp());
+        }
+
+        $dataLimite = $referencia->copy()->addDays($prazoDias)->addSeconds($segundosParados);
+        $diasRestantes = (int) round($agora->diffInDays($dataLimite, false));
+
+        return [
+            'data_referencia_prazo' => $referencia,
+            'data_limite' => $dataLimite,
+            'dias_restantes' => $diasRestantes,
+            'atrasado' => $diasRestantes < 0,
+            'pausado' => $pausado,
+            'prazo_reiniciado' => $reiniciadoNaUnidade || $this->prazoFilaPublicaFoiReiniciado($dataBase),
+        ];
+    }
+
+    /**
+     * Data em que a documentação obrigatória de uma pasta/unidade ficou completa
+     * (maior data de aprovação), ou null se ainda falta algum documento aprovado.
+     * Mesma regra do checklist por unidade da tela do processo.
+     */
+    public function getDataDocumentacaoCompletaPasta(ProcessoPasta $pasta, ?Collection $checklist = null): ?Carbon
+    {
+        $checklist ??= $this->getDocumentosObrigatoriosChecklist();
+        $obrigatorios = $checklist->where('obrigatorio', true);
+
+        if ($obrigatorios->isEmpty()) {
+            return null;
+        }
+
+        $dataCompleta = null;
+        foreach ($obrigatorios as $docObrig) {
+            $docsDoTipo = $this->documentos
+                ->where('tipo_documento_obrigatorio_id', $docObrig['id'])
+                ->where('pasta_id', $pasta->id);
+
+            // Vale o envio mais recente (se foi reenviado e está pendente/rejeitado, não está completo)
+            if ($docsDoTipo->sortByDesc('created_at')->first()?->status_aprovacao !== 'aprovado') {
+                return null;
+            }
+
+            $aprovado = $docsDoTipo->where('status_aprovacao', 'aprovado')
+                ->sortByDesc(fn ($d) => $d->aprovado_em ?? $d->updated_at)
+                ->first();
+            $dataAprovacao = $aprovado?->aprovado_em ?? $aprovado?->updated_at;
+            $dataAprovacao = $dataAprovacao ? Carbon::parse($dataAprovacao) : null;
+
+            if ($dataAprovacao && (!$dataCompleta || $dataAprovacao->greaterThan($dataCompleta))) {
+                $dataCompleta = $dataAprovacao;
+            }
+        }
+
+        return $dataCompleta;
     }
 
     public function calcularDataLimiteFilaPublica($dataReferencia, int $prazoDias): Carbon

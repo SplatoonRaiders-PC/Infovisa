@@ -1004,22 +1004,20 @@ class ProcessoController extends Controller
                         }
                     }
 
-                    if ($todosAprovU && $dataUltimoAprovU) {
+                    $pastaModelU = $pastaInfo instanceof \App\Models\ProcessoPasta ? $pastaInfo : \App\Models\ProcessoPasta::find($pastaId);
+
+                    if ($todosAprovU && $dataUltimoAprovU && $pastaModelU) {
                         $grupoRiscoU = $processo->estabelecimento ? $processo->estabelecimento->getGrupoRisco() : null;
                         $prazoU = $processo->tipoProcesso->getPrazoFilaPublicaPorRisco($grupoRiscoU);
-                        $dataRefU = $processo->getDataReferenciaFilaPublica($dataUltimoAprovU);
-                        $dataLimiteU = $processo->calcularDataLimiteFilaPublica($dataUltimoAprovU, $prazoU);
-                        $diasRestantesU = (int) round(\Carbon\Carbon::now()->diffInDays($dataLimiteU, false));
 
-                        $avisoFilaPublicaPorUnidade[$pastaId] = [
+                        // Considera parada/reinício do processo e da própria unidade
+                        $prazoCalculadoU = $processo->calcularPrazoFilaPublicaUnidade($pastaModelU, $dataUltimoAprovU, (int) $prazoU);
+
+                        $avisoFilaPublicaPorUnidade[$pastaId] = array_merge($prazoCalculadoU, [
                             'nome' => $info['nome'],
                             'prazo' => $prazoU,
                             'data_documentos_completos' => $dataUltimoAprovU,
-                            'data_referencia_prazo' => $dataRefU,
-                            'dias_restantes' => $diasRestantesU,
-                            'atrasado' => $diasRestantesU < 0,
-                            'pausado' => $processo->status === 'parado',
-                        ];
+                        ]);
                     }
                 }
             }

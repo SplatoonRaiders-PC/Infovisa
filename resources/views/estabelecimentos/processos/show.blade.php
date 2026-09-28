@@ -255,6 +255,8 @@
                         Prazo suspenso • Restavam {{ $diasU }} {{ $diasU == 1 ? 'dia' : 'dias' }}
                     @elseif($avisoU['atrasado'])
                         Prazo vencido! Atrasado há {{ abs($diasU) }} {{ abs($diasU) == 1 ? 'dia' : 'dias' }}
+                    @elseif($avisoU['prazo_reiniciado'] ?? false)
+                        Prazo reiniciado em {{ $avisoU['data_referencia_prazo']->format('d/m/Y') }} • Prazo: {{ $avisoU['prazo'] }} dias • Restam {{ $diasU }} {{ $diasU == 1 ? 'dia' : 'dias' }}
                     @else
                         Documentação completa em {{ $avisoU['data_documentos_completos']->format('d/m/Y') }} • Prazo: {{ $avisoU['prazo'] }} dias • Restam {{ $diasU }} dias
                     @endif
@@ -295,6 +297,52 @@
             </div>
         </div>
         @endif
+        @endforeach
+    @endif
+
+    {{-- Pastas/Unidades Paradas: retomar (continua o prazo) ou reiniciar o prazo da unidade --}}
+    @if($processo->status !== 'arquivado')
+        @foreach($processo->pastas->where('status', 'parado')->sortBy('ordem') as $pastaParada)
+        <div class="mb-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-start gap-3 min-w-0">
+                    <div class="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                        <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <p class="text-sm font-semibold text-red-800">{{ $pastaParada->nome }} — Parada <span class="font-normal text-red-600">(prazo da unidade suspenso)</span></p>
+                        <p class="text-xs text-red-700 mt-0.5 break-words"><strong>Motivo:</strong> {{ $pastaParada->motivo_parada }}</p>
+                        @if($pastaParada->data_parada)
+                        <p class="text-[11px] text-red-500 mt-0.5">Parada em {{ $pastaParada->data_parada->format('d/m/Y H:i') }}@if($pastaParada->usuarioParada) • por {{ $pastaParada->usuarioParada->nome }}@endif</p>
+                        @endif
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    <form action="{{ route('admin.estabelecimentos.processos.pasta.retomar', [$estabelecimento->id, $processo->id, $pastaParada->id]) }}" method="POST">
+                        @csrf
+                        <input type="hidden" name="modo" value="continuar">
+                        <button type="submit" onclick="return confirm('Retomar a unidade {{ addslashes($pastaParada->nome) }}? O prazo continua de onde parou.')"
+                                title="O prazo volta a contar de onde parou (o tempo parado não conta)"
+                                class="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            Retomar
+                        </button>
+                    </form>
+                    <form action="{{ route('admin.estabelecimentos.processos.pasta.retomar', [$estabelecimento->id, $processo->id, $pastaParada->id]) }}" method="POST">
+                        @csrf
+                        <input type="hidden" name="modo" value="reiniciar">
+                        <button type="submit" onclick="return confirm('Reiniciar o prazo da unidade {{ addslashes($pastaParada->nome) }}? O prazo volta a contar do zero a partir de agora.')"
+                                title="O prazo da unidade recomeça do zero a partir de agora (igual ao Reiniciar Processo)"
+                                class="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-sm transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            Reiniciar prazo
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
         @endforeach
     @endif
 

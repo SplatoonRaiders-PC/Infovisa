@@ -1147,38 +1147,21 @@ class ProcessoController extends Controller
                     }
                 }
 
-                if ($todosAprovadosUnidade && $dataUltimoAprovadoUnidade) {
+                $pastaModel = $pasta instanceof \App\Models\ProcessoPasta ? $pasta : \App\Models\ProcessoPasta::find($pastaId);
+
+                if ($todosAprovadosUnidade && $dataUltimoAprovadoUnidade && $pastaModel) {
                     $grupoRiscoU = $processo->estabelecimento ? $processo->estabelecimento->getGrupoRisco() : null;
                     $prazoU = $processo->tipoProcesso->getPrazoFilaPublicaPorRisco($grupoRiscoU);
-                    
-                    // Verifica se a unidade específica está parada (via pivot)
-                    $pasta = $info['pasta'] ?? null;
-                    $unidadeId = $pasta?->unidade_id;
-                    $pivotUnidade = $unidadeId ? $processo->unidades->where('id', $unidadeId)->first() : null;
-                    $unidadePausada = $processo->status === 'parado' || ($pivotUnidade && $pivotUnidade->pivot->status === 'parado');
 
-                    // Calcula tempo parado da unidade
-                    $tempoParadoUnidade = 0;
-                    if ($pivotUnidade) {
-                        $tempoParadoUnidade = (int) ($pivotUnidade->pivot->tempo_total_parado_segundos ?? 0);
-                        if ($pivotUnidade->pivot->status === 'parado' && $pivotUnidade->pivot->data_parada) {
-                            $tempoParadoUnidade += max(0, now()->getTimestamp() - \Carbon\Carbon::parse($pivotUnidade->pivot->data_parada)->getTimestamp());
-                        }
-                    }
+                    // Considera parada/reinício do processo e da própria unidade (pasta ou vínculo)
+                    $prazoCalculadoU = $processo->calcularPrazoFilaPublicaUnidade($pastaModel, $dataUltimoAprovadoUnidade, (int) $prazoU);
 
-                    $dataRefU = $processo->getDataReferenciaFilaPublica($dataUltimoAprovadoUnidade);
-                    $dataLimiteU = $dataRefU->copy()->addDays($prazoU)->addSeconds($tempoParadoUnidade + $processo->getTempoTotalParadoConsiderandoParadaAtual());
-                    $diasRestantesU = (int) round(\Carbon\Carbon::now()->diffInDays($dataLimiteU, false));
-
-                    $avisoFilaPublicaPorUnidade[$pastaId] = [
+                    $avisoFilaPublicaPorUnidade[$pastaId] = array_merge($prazoCalculadoU, [
                         'nome' => $info['nome'],
                         'prazo' => $prazoU,
                         'data_documentos_completos' => $dataUltimoAprovadoUnidade,
-                        'data_referencia_prazo' => $dataRefU,
-                        'dias_restantes' => $diasRestantesU,
-                        'atrasado' => $diasRestantesU < 0,
-                        'pausado' => $unidadePausada,
-                    ];
+                        'pasta' => $pastaModel,
+                    ]);
                 }
             }
         }
@@ -3953,6 +3936,93 @@ TXT;
             return redirect()
                 ->route('admin.estabelecimentos.processos.show', [$estabelecimentoId, $processoId])
                 ->with('success', "Unidade '{$nomeUnidade}' retomada com sucesso!");
+
+        } catch (\Exception $e) {
+            return back()->with('error', 'Erro ao retomar unidade: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Retoma uma pasta/unidade parada.
+     * - modo "continuar": o prazo volta a contar de onde parou (o tempo parado é descontado)
+     * - modo "reiniciar": o prazo da unidade recomeça do zero, igual ao "Reiniciar Processo"
+     */
+    public function retomarPasta(Request $request, $estabelecimentoId, $processoId, $pastaId)
+    {
+        $estabelecimento = Estabelecimento::findOrFail($estabelecimentoId);
+        $this->validarPermissaoAcesso($estabelecimento);
+
+        $request->validate([
+            'modo' => 'required|in:continuar,reiniciar',
+        ]);
+
+        try {
+            $processo = Processo::where('estabelecimento_id', $estabelecimentoId)->findOrFail($processoId);
+            $pasta = \App\Models\ProcessoPasta::where('processo_id', $processo->id)->findOrFail($pastaId);
+
+            if ($pasta->isConcluida()) {
+                return back()->with('error', 'Esta unidade já foi concluída.');
+            }
+
+            $reiniciar = $request->input('modo') === 'reiniciar';
+
+            if (!$pasta->isParada()) {
+                return back()->with('error', 'Esta unidade não está parada.');
+            }
+
+            $dadosRetomada = [
+                'status' => 'ativo',
+                'motivo_parada' => null,
+                'data_parada' => null,
+                'usuario_parada_id' => null,
+            ];
+
+            if ($reiniciar) {
+                $dadosPasta = $dadosRetomada + [
+                    'tempo_total_parado_segundos' => 0,
+                    'prazo_fila_publica_reiniciado_em' => now(),
+                ];
+            } else {
+                $tempoParado = (int) ($pasta->tempo_total_parado_segundos ?? 0);
+                if ($pasta->data_parada) {
+                    $tempoParado += max(0, now()->getTimestamp() - $pasta->data_parada->getTimestamp());
+                }
+                $dadosPasta = $dadosRetomada + ['tempo_total_parado_segundos' => $tempoParado];
+            }
+
+            DB::transaction(function () use ($processo, $pasta, $dadosPasta, $dadosRetomada, $reiniciar) {
+                $pasta->update($dadosPasta);
+
+                // Mantém o vínculo da unidade coerente (parada feita pela unidade em vez da pasta)
+                if ($pasta->unidade_id) {
+                    $pivot = $processo->unidades()->where('unidade_id', $pasta->unidade_id)->first()?->pivot;
+                    if ($pivot && ($reiniciar || $pivot->status === 'parado')) {
+                        $tempoPivot = (int) ($pivot->tempo_total_parado_segundos ?? 0);
+                        if (!$reiniciar && $pivot->status === 'parado' && $pivot->data_parada) {
+                            $tempoPivot += max(0, now()->getTimestamp() - \Carbon\Carbon::parse($pivot->data_parada)->getTimestamp());
+                        }
+                        $processo->unidades()->updateExistingPivot($pasta->unidade_id, $dadosRetomada + [
+                            'tempo_total_parado_segundos' => $reiniciar ? 0 : $tempoPivot,
+                        ]);
+                    }
+                }
+
+                \App\Models\ProcessoEvento::create([
+                    'processo_id' => $processo->id,
+                    'usuario_interno_id' => Auth::guard('interno')->user()->id,
+                    'tipo_evento' => $reiniciar ? 'unidade_prazo_reiniciado' : 'unidade_retomada',
+                    'titulo' => $reiniciar ? "Prazo da unidade reiniciado: {$pasta->nome}" : "Unidade retomada: {$pasta->nome}",
+                    'descricao' => $reiniciar
+                        ? "Unidade '{$pasta->nome}' reiniciada. O prazo da unidade voltou a contar do zero em " . now()->format('d/m/Y H:i') . '.'
+                        : "Unidade '{$pasta->nome}' retomada. O prazo continua de onde parou.",
+                ]);
+            });
+
+            return redirect()
+                ->route('admin.estabelecimentos.processos.show', [$estabelecimentoId, $processoId])
+                ->with('success', $reiniciar
+                    ? "Prazo da unidade '{$pasta->nome}' reiniciado com sucesso!"
+                    : "Unidade '{$pasta->nome}' retomada com sucesso!");
 
         } catch (\Exception $e) {
             return back()->with('error', 'Erro ao retomar unidade: ' . $e->getMessage());

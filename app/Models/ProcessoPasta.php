@@ -22,6 +22,7 @@ class ProcessoPasta extends Model
         'data_parada',
         'usuario_parada_id',
         'tempo_total_parado_segundos',
+        'prazo_fila_publica_reiniciado_em',
         'data_conclusao',
         'motivo_conclusao',
         'usuario_conclusao_id',
@@ -31,8 +32,17 @@ class ProcessoPasta extends Model
         'protegida' => 'boolean',
         'data_parada' => 'datetime',
         'tempo_total_parado_segundos' => 'integer',
+        'prazo_fila_publica_reiniciado_em' => 'datetime',
         'data_conclusao' => 'datetime',
     ];
+
+    /**
+     * Verifica se a pasta/unidade está parada
+     */
+    public function isParada(): bool
+    {
+        return $this->status === 'parado';
+    }
 
     /**
      * Relacionamento com usuário que parou a pasta
