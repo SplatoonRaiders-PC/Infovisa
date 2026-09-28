@@ -396,7 +396,7 @@ class RelatorioEstabelecimentoController extends Controller
             $itens->count(),
             $porPagina,
             $pagina,
-            ['path' => $request->url(), 'query' => $request->query()]
+            ['path' => route('admin.relatorios.estabelecimentos'), 'query' => $request->query()]
         );
     }
 }
