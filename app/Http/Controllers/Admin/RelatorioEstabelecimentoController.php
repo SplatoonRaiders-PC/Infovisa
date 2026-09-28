@@ -151,6 +151,9 @@ class RelatorioEstabelecimentoController extends Controller
                 'processos' => fn ($q) => $q->with('tipoProcesso')->orderByDesc('created_at'),
             ]);
 
+        // Cadastros rejeitados nunca entram no relatório (nem em "Todos os cadastros")
+        $query->where(fn ($q) => $q->whereNull('status')->orWhere('status', '!=', 'rejeitado'));
+
         if ($filtros['status_estabelecimento'] === 'aprovado') {
             $query->where('status', 'aprovado')->where('ativo', true);
         }

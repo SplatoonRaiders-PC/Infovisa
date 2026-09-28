@@ -27,6 +27,7 @@
 
     $categorias = [
         'Estabelecimentos' => [
+            ['rota' => 'admin.relatorios.estabelecimentos', 'titulo' => 'Controle de Estabelecimentos e Processos', 'descricao' => 'Veja quem já abriu processo e quem ainda não abriu: licenciamento do ano, projeto arquitetônico e análise de rotulagem.', 'icone' => 'grafico', 'cor' => 'blue'],
             ['rota' => 'admin.relatorios.estabelecimentos-cnae', 'titulo' => 'Estabelecimentos por CNAE', 'descricao' => 'Quantos estabelecimentos existem por atividade, com escopo automático por perfil.', 'icone' => 'predio', 'cor' => 'cyan'],
             ['rota' => 'admin.relatorios.equipamentos-radiacao', 'titulo' => 'Equipamentos de Imagem', 'descricao' => 'Situação do cadastro de equipamentos de radiação por estabelecimento.', 'icone' => 'lampada', 'cor' => 'orange'],
         ],
@@ -60,34 +61,6 @@
         </div>
     </div>
 
-    {{-- Destaque: Controle de Estabelecimentos e Processos --}}
-    <a href="{{ route('admin.relatorios.estabelecimentos') }}"
-       x-show="busca === '' || 'controle estabelecimentos processos licenciamento projeto arquitetonico rotulagem pendentes graficos'.includes(busca.toLowerCase())"
-       class="group relative block overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 p-6 text-white shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:shadow-indigo-500/30 transition">
-        <div class="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-white/10"></div>
-        <div class="absolute right-20 -bottom-16 w-40 h-40 rounded-full bg-white/5"></div>
-        <div class="relative flex flex-col md:flex-row md:items-center gap-5">
-            <div class="w-14 h-14 rounded-2xl bg-white/15 ring-1 ring-white/25 flex items-center justify-center flex-shrink-0">
-                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ $icones['grafico'] }}"/></svg>
-            </div>
-            <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                    <span class="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-bold uppercase tracking-wider">Novo</span>
-                    <span class="text-xs text-white/70">Estabelecimentos</span>
-                </div>
-                <h2 class="text-lg font-bold">Controle de Estabelecimentos e Processos</h2>
-                <p class="text-sm text-white/80 mt-1 max-w-2xl">
-                    Veja quem já abriu processo e quem ainda não abriu: licenciamento do ano, projeto arquitetônico e análise de rotulagem,
-                    com gráficos para as competências estadual e municipal.
-                </p>
-            </div>
-            <span class="inline-flex items-center gap-1.5 self-start md:self-center px-4 py-2 rounded-xl bg-white text-indigo-700 text-sm font-semibold group-hover:gap-2.5 transition-all">
-                Abrir relatório
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
-            </span>
-        </div>
-    </a>
-
     {{-- Categorias --}}
     @foreach($categorias as $categoria => $relatorios)
         @continue(empty($relatorios))
@@ -96,7 +69,7 @@
         @endphp
         <section x-show="busca === '' || {{ json_encode($termos) }}.some(t => t.includes(busca.toLowerCase()))">
             <h2 class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2.5 px-1">{{ $categoria }}</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 @foreach($relatorios as $relatorio)
                     <a href="{{ route($relatorio['rota']) }}"
                        x-show="busca === '' || {{ json_encode(mb_strtolower($relatorio['titulo'] . ' ' . $relatorio['descricao'] . ' ' . $categoria)) }}.includes(busca.toLowerCase())"
