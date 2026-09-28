@@ -81,16 +81,21 @@ class FilaProcessosUnidadesTest extends TestCase
         return $pasta;
     }
 
-    private function entrada(Processo $processo, bool $raizCompleta = false): ?array
+    private function entradas(Processo $processo, bool $raizCompleta = false): array
     {
         $tipo = new TipoProcesso();
         $tipo->forceFill(['prazo_fila_publica' => 30, 'prazo_fila_publica_alto' => 60]);
 
-        return (new ReflectionMethod(HomeController::class, 'montarEntradaFila'))
+        return (new ReflectionMethod(HomeController::class, 'montarEntradasFila'))
             ->invoke(new HomeController(), $processo, $tipo, [
                 'completo' => $raizCompleta,
                 'data_ultimo_aprovado' => $raizCompleta ? Carbon::parse('2026-09-20 11:00:00') : null,
             ]);
+    }
+
+    private function entrada(Processo $processo, bool $raizCompleta = false): ?array
+    {
+        return $this->entradas($processo, $raizCompleta)[0] ?? null;
     }
 
     public function test_unidade_completa_entra_mesmo_com_raiz_e_outra_unidade_pendentes(): void
@@ -137,6 +142,8 @@ class FilaProcessosUnidadesTest extends TestCase
         $entrada = $this->entrada($processo);
 
         $this->assertTrue($entrada['pausado']);
+        $this->assertSame('parado', $entrada['status']);
+        $this->assertSame('aberto', $processo->status);
         $this->assertSame(60, $entrada['dias_restantes']);
         $this->assertSame('0h', $entrada['tempo_formatado']);
     }
@@ -149,11 +156,45 @@ class FilaProcessosUnidadesTest extends TestCase
         $pasta->data_parada = '2026-09-20 11:00:00';
         $pasta->prazo_fila_publica_reiniciado_em = '2026-09-20 11:00:00';
         $this->adicionarUnidade($processo, 2, 'BANCO DE OLHOS');
-        $entrada = $this->entrada($processo);
+        $entradas = $this->entradas($processo);
+        $entrada = $entradas[0];
 
-        $this->assertCount(2, $entrada['unidades_prazo']);
+        $this->assertCount(2, $entradas);
+        $this->assertCount(1, $entrada['unidades_prazo']);
         $this->assertSame('BANCO DE OLHOS', $entrada['unidade_referencia']);
         $this->assertFalse($entrada['pausado']);
+        $this->assertSame('aberto', $entrada['status']);
+        $this->assertSame('parado', $entradas[1]['status']);
+        $this->assertCount(1, $entradas[1]['unidades_prazo']);
+        $this->assertSame('PS INFANTIL', $entradas[1]['unidades_prazo'][0]['nome']);
+    }
+
+    public function test_raiz_completa_nao_mistura_unidade_suspensa_com_abertos(): void
+    {
+        $processo = $this->processo();
+        $processo->pastas->first()->status = 'parado';
+        $entradas = $this->entradas($processo, true);
+
+        $this->assertCount(2, $entradas);
+        $this->assertSame('aberto', $entradas[0]['status']);
+        $this->assertSame([], $entradas[0]['unidades_prazo']);
+        $this->assertSame('parado', $entradas[1]['status']);
+        $this->assertTrue($entradas[1]['pausado']);
+    }
+
+    public function test_processo_parado_coloca_todas_as_unidades_em_parado(): void
+    {
+        $processo = $this->processo();
+        $processo->status = 'parado';
+        $processo->data_parada = '2026-09-28 11:00:00';
+        $this->adicionarUnidade($processo, 2, 'BANCO DE OLHOS');
+        $entradas = $this->entradas($processo);
+
+        $this->assertCount(1, $entradas);
+        $this->assertSame('parado', $entradas[0]['status']);
+        $this->assertCount(2, $entradas[0]['unidades_prazo']);
+        $this->assertTrue($entradas[0]['unidades_prazo'][0]['pausado']);
+        $this->assertTrue($entradas[0]['unidades_prazo'][1]['pausado']);
     }
 
     public function test_processo_sem_unidades_preserva_prazo_da_raiz(): void

@@ -219,6 +219,7 @@
                         <p class="text-xs text-slate-600 leading-relaxed mt-0.5">
                             O processo entra na fila <strong>após todos os documentos obrigatórios serem enviados e aprovados</strong>.
                             Cada unidade é avaliada separadamente: pendências em outras unidades ou na parte principal não impedem sua entrada na fila.
+                            Unidades suspensas aparecem somente no filtro <strong>Parado</strong>, separadas das unidades em andamento.
                             O prazo conta a partir da aprovação do último documento obrigatório ou do reinício do processo/unidade, e fica <strong>suspenso</strong> enquanto o processo ou a unidade estiver parado.
                         </p>
                     </div>
@@ -245,7 +246,7 @@
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
                             <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
-                                {{ count($fila['processos']) }} {{ count($fila['processos']) == 1 ? 'processo' : 'processos' }}
+                                {{ count($fila['processos']) }} {{ count($fila['processos']) == 1 ? 'registro' : 'registros' }}
                             </span>
                             @if($fila['prazo_analise'])
                             <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 ring-1 ring-blue-200">
@@ -279,6 +280,7 @@
                             <tbody class="divide-y divide-slate-100">
                                 @foreach($fila['processos'] as $processo)
                                 <tr class="hover:bg-slate-50/70 transition-colors align-top"
+                                    x-cloak
                                     x-show="mostrarProcesso('{{ $processo['status'] }}')"
                                     x-transition:enter="transition ease-out duration-200"
                                     x-transition:enter-start="opacity-0"
@@ -332,6 +334,9 @@
                                             <span class="w-1.5 h-1.5 rounded-full {{ $statusDots[$processo['status']] ?? 'bg-slate-400' }}"></span>
                                             {{ $statusLabels[$processo['status']] ?? ucfirst($processo['status']) }}
                                         </span>
+                                        @if($processo['unidade_referencia'])
+                                            <p class="text-[11px] text-slate-500 mt-1">Status da unidade</p>
+                                        @endif
                                     </td>
                                     <td class="px-5 py-3.5 whitespace-nowrap">
                                         <p class="text-xs text-slate-700">{{ $processo['data_referencia_prazo'] }}</p>
@@ -393,7 +398,7 @@
                     </div>
 
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 text-[11px] text-slate-500">
-                        <span><strong class="text-slate-700">Total:</strong> {{ count($fila['processos']) }} processo(s) com documentação completa na parte principal ou em pelo menos uma unidade</span>
+                        <span><strong>Total:</strong> {{ count($fila['processos']) }} registro(s) de processos/unidades, separados por status</span>
                         <span>Unidades com prazo próprio aparecem abaixo do estabelecimento</span>
                     </div>
                 </div>

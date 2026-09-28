@@ -57,8 +57,7 @@ class HomeController extends Controller
                 // Verifica se todos os documentos obrigatórios estão aprovados
                 $statusDocs = $this->verificarDocumentosObrigatorios($processo, $tipo);
 
-                $entrada = $this->montarEntradaFila($processo, $tipo, $statusDocs);
-                if ($entrada !== null) {
+                foreach ($this->montarEntradasFila($processo, $tipo, $statusDocs) as $entrada) {
                     $processosAptos[] = $entrada;
                 }
             }
@@ -89,11 +88,32 @@ class HomeController extends Controller
     /**
      * Uma unidade apta entra na fila mesmo com pendências na raiz ou em outras unidades.
      */
-    private function montarEntradaFila(Processo $processo, TipoProcesso $tipo, array $statusDocs): ?array
+    private function montarEntradasFila(Processo $processo, TipoProcesso $tipo, array $statusDocs): array
     {
         $grupoRisco = $processo->estabelecimento?->getGrupoRisco();
         $prazo = $tipo->getPrazoFilaPublicaPorRisco($grupoRisco);
         $unidadesPrazo = $this->calcularPrazosUnidades($processo, $prazo);
+        $entradas = [];
+
+        // A mesma instituição pode ter unidades em análise e outras paradas.
+        // Cada grupo recebe sua referência e seu status para o filtro da fila.
+        foreach ([false, true] as $suspensos) {
+            $unidadesGrupo = array_values(array_filter($unidadesPrazo,
+                fn ($unidade) => (bool) $unidade['pausado'] === $suspensos));
+            $docsGrupo = $statusDocs;
+            $docsGrupo['completo'] = $statusDocs['completo']
+                && ($processo->status === 'parado') === $suspensos;
+            $entrada = $this->montarEntradaFila($processo, $prazo, $docsGrupo, $unidadesGrupo);
+            if ($entrada !== null) {
+                $entradas[] = $entrada;
+            }
+        }
+
+        return $entradas;
+    }
+
+    private function montarEntradaFila(Processo $processo, ?int $prazo, array $statusDocs, array $unidadesPrazo): ?array
+    {
 
         if (!$statusDocs['completo'] && empty($unidadesPrazo)) {
             return null;
@@ -101,10 +121,9 @@ class HomeController extends Controller
 
         $unidadeReferencia = null;
         if (!$statusDocs['completo']) {
-            // Representa a unidade em análise mais antiga; se todas estão suspensas,
-            // usa a mais antiga delas. Nunca cria um prazo fictício para a raiz.
+            // Usa a unidade mais antiga do grupo, sem criar prazo para a raiz.
             $unidades = collect($unidadesPrazo)->sortBy('data_referencia_prazo_sort');
-            $unidadeReferencia = $unidades->firstWhere('pausado', false) ?? $unidades->first();
+            $unidadeReferencia = $unidades->first();
         }
 
         if ($unidadeReferencia) {
@@ -137,7 +156,7 @@ class HomeController extends Controller
             'estabelecimento' => $processo->estabelecimento
                 ? ($processo->estabelecimento->nome_fantasia ?? $processo->estabelecimento->nome_completo ?? 'Não informado')
                 : 'Não vinculado',
-            'status' => $processo->status,
+            'status' => $pausado ? 'parado' : $processo->status,
             'data_abertura' => Carbon::parse($processo->created_at)->format('d/m/Y H:i'),
             'data_documentos_completos' => Carbon::parse($dataDocumentosCompletos)->format('d/m/Y H:i'),
             'data_referencia_prazo' => $dataRef->format('d/m/Y H:i'),
