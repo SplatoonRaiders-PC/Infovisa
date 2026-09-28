@@ -18,12 +18,33 @@
         'violet' => ['bg' => 'bg-violet-50', 'text' => 'text-violet-600', 'bar' => 'bg-violet-500', 'ring' => 'hover:ring-violet-300'],
         'amber' => ['bg' => 'bg-amber-50', 'text' => 'text-amber-600', 'bar' => 'bg-amber-500', 'ring' => 'hover:ring-amber-300'],
     ];
-    $situacoes = [
-        null => ['label' => 'Todos', 'total' => $indicadores['total']],
-        'pendente' => ['label' => 'Pendentes', 'total' => $indicadores['pendentes']],
-        'em_dia' => ['label' => 'Em dia', 'total' => $indicadores['em_dia']],
-        'com_ativo' => ['label' => 'Com processo ativo', 'total' => $indicadores['com_ativo']],
-        'sem_ativo' => ['label' => 'Sem processo ativo', 'total' => $indicadores['sem_ativo']],
+    $tipoFoco = $filtros['tipo'];
+    if ($tipoFoco) {
+        // Com um processo escolhido: etapas do processo no ano (substituem "com/sem processo ativo")
+        $situacoes = [
+            null => ['label' => 'Todos', 'total' => $indicadores['total']],
+            'pendente' => ['label' => 'Não abriram', 'total' => $indicadores['pendentes']],
+            'em_dia' => ['label' => 'Abriram', 'total' => $indicadores['em_dia']],
+        ];
+        if ($tipoFoco === 'licenciamento') {
+            $situacoes['com_alvara'] = ['label' => 'Com alvará sanitário', 'total' => $indicadores['com_alvara']];
+        }
+        $situacoes['doc_completa'] = ['label' => $tipoFoco === 'licenciamento' ? 'Doc. completa (sem alvará)' : 'Doc. completa', 'total' => $indicadores['doc_completa']];
+        $situacoes['doc_incompleta'] = ['label' => 'Doc. incompleta', 'total' => $indicadores['doc_incompleta']];
+    } else {
+        $situacoes = [
+            null => ['label' => 'Todos', 'total' => $indicadores['total']],
+            'pendente' => ['label' => 'Pendentes', 'total' => $indicadores['pendentes']],
+            'em_dia' => ['label' => 'Em dia', 'total' => $indicadores['em_dia']],
+            'com_ativo' => ['label' => 'Com processo ativo', 'total' => $indicadores['com_ativo']],
+            'sem_ativo' => ['label' => 'Sem processo ativo', 'total' => $indicadores['sem_ativo']],
+        ];
+    }
+    $etapaClasse = [
+        'nao_abriu' => 'bg-red-50 text-red-700 ring-red-200',
+        'com_alvara' => 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+        'doc_completa' => 'bg-blue-50 text-blue-700 ring-blue-200',
+        'doc_incompleta' => 'bg-amber-50 text-amber-700 ring-amber-200',
     ];
     $fmt = fn ($n) => number_format((int) $n, 0, ',', '.');
 @endphp
@@ -142,11 +163,27 @@
                 <span class="text-emerald-600 font-semibold">{{ $fmt($indicadores['municipal']) }}</span> municipais
             </p>
         </div>
+        @if($tipoFoco === 'licenciamento')
+        <a href="{{ $urlSituacao('com_alvara') }}" class="bg-gradient-to-br from-emerald-50 to-white rounded-2xl border border-emerald-200 shadow-sm p-4 hover:ring-2 hover:ring-emerald-200 transition">
+            <p class="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Com alvará sanitário</p>
+            <p class="text-2xl font-bold text-emerald-600 tabular-nums mt-1">{{ $fmt($indicadores['com_alvara']) }}</p>
+            <p class="text-[11px] text-slate-500 mt-1">
+                {{ $fmt($indicadores['doc_completa']) }} doc. completa sem alvará · {{ $fmt($indicadores['doc_incompleta']) }} doc. incompleta
+            </p>
+        </a>
+        @elseif($tipoFoco)
+        <a href="{{ $urlSituacao('doc_completa') }}" class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 hover:ring-2 hover:ring-blue-200 transition">
+            <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Documentação completa</p>
+            <p class="text-2xl font-bold text-blue-600 tabular-nums mt-1">{{ $fmt($indicadores['doc_completa']) }}</p>
+            <p class="text-[11px] text-slate-500 mt-1">{{ $fmt($indicadores['doc_incompleta']) }} com documentação incompleta</p>
+        </a>
+        @else
         <a href="{{ $urlSituacao('com_ativo') }}" class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 hover:ring-2 hover:ring-blue-200 transition">
             <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Com processo ativo</p>
             <p class="text-2xl font-bold text-blue-600 tabular-nums mt-1">{{ $fmt($indicadores['com_ativo']) }}</p>
             <p class="text-[11px] text-slate-500 mt-1">{{ $fmt($indicadores['sem_ativo']) }} sem nenhum processo ativo</p>
         </a>
+        @endif
         <a href="{{ $urlSituacao('pendente') }}" class="relative bg-gradient-to-br from-red-50 to-white rounded-2xl border border-red-200 shadow-sm p-4 hover:ring-2 hover:ring-red-200 transition">
             <p class="text-[11px] font-semibold text-red-700 uppercase tracking-wide">Precisam abrir processo</p>
             <p class="text-2xl font-bold text-red-600 tabular-nums mt-1">{{ $fmt($indicadores['pendentes']) }}</p>
@@ -361,7 +398,11 @@
                                     default => 'bg-slate-100 text-slate-600 ring-slate-200',
                                 };
                             @endphp
+                            @if(isset($linha['etapa']))
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset whitespace-nowrap {{ $etapaClasse[$linha['etapa']] ?? $sitClasse }}">{{ $linha['etapa_label'] }}</span>
+                            @else
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset {{ $sitClasse }}">{{ $linha['situacao_label'] }}</span>
+                            @endif
                             <p class="text-[10px] text-slate-400 mt-1">
                                 {{ $linha['ultimo_processo'] ? 'Último: ' . $linha['ultimo_processo']->format('d/m/Y') : 'Nunca abriu processo' }}
                             </p>

@@ -79,6 +79,9 @@ class RelatorioEstabelecimentoController extends Controller
             fwrite($out, "\xEF\xBB\xBF");
 
             $cabecalho = ['Estabelecimento', 'Razão social', 'CNPJ/CPF', 'Município', 'Competência', 'Situação'];
+            if ($filtros['tipo']) {
+                $cabecalho[] = 'Etapa';
+            }
             foreach ($tipos as $tipo) {
                 $cabecalho[] = $tipo->nome . ($tipo->anual ? ' (' . $filtros['ano'] . ')' : '');
             }
@@ -96,6 +99,9 @@ class RelatorioEstabelecimentoController extends Controller
                     ucfirst($linha['competencia']),
                     $linha['situacao_label'],
                 ];
+                if ($filtros['tipo']) {
+                    $registro[] = $linha['etapa_label'] ?? '';
+                }
 
                 foreach ($tipos as $codigo => $tipo) {
                     $demanda = $linha['demandas'][$codigo] ?? null;
@@ -124,7 +130,7 @@ class RelatorioEstabelecimentoController extends Controller
                 ? $request->input('competencia') : null,
             'municipio_id' => $podeFiltrarMunicipio && $request->filled('municipio_id') ? $request->integer('municipio_id') : null,
             'tipo' => in_array($request->input('tipo'), self::TIPOS_CONTROLADOS, true) ? $request->input('tipo') : null,
-            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia'], true)
+            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'com_alvara', 'doc_completa', 'doc_incompleta'], true)
                 ? $request->input('situacao') : null,
             'status_estabelecimento' => $request->input('status_estabelecimento', 'aprovado') === 'todos' ? 'todos' : 'aprovado',
             'busca' => trim((string) $request->input('busca')),
@@ -191,12 +197,70 @@ class RelatorioEstabelecimentoController extends Controller
             });
         }
 
-        return $query->orderByRaw('COALESCE(nome_fantasia, razao_social) asc')->get()
+        $linhas = $query->orderByRaw('COALESCE(nome_fantasia, razao_social) asc')->get()
             ->map(fn (Estabelecimento $e) => $this->montarLinha($e, $tipos, $filtros))
             ->filter(fn ($linha) => $this->dentroDoEscopo($linha, $usuario, $filtros['competencia']))
             // Com tipo escolhido, só entram estabelecimentos que exigem esse processo
             ->when($filtros['tipo'], fn ($c) => $c->filter(fn ($linha) => isset($linha['demandas'][$filtros['tipo']])))
             ->values();
+
+        return $filtros['tipo'] ? $this->classificarEtapas($linhas, $filtros['tipo']) : $linhas;
+    }
+
+    /**
+     * Com um tipo de processo escolhido, classifica em que etapa está o processo do ano de cada estabelecimento:
+     *  - nao_abriu      → não abriu o processo (no ano, se for anual)
+     *  - com_alvara     → (licenciamento) processo com Alvará Sanitário assinado
+     *  - doc_completa   → todos os documentos obrigatórios aprovados (ainda sem alvará)
+     *  - doc_incompleta → falta enviar/aprovar documento obrigatório
+     */
+    private function classificarEtapas(Collection $linhas, string $tipo): Collection
+    {
+        $processos = new \Illuminate\Database\Eloquent\Collection(
+            $linhas->map(fn ($l) => $l['demandas'][$tipo]['processo'] ?? null)->filter()->values()->all()
+        );
+
+        $comAlvara = collect();
+        if ($tipo === 'licenciamento' && $processos->isNotEmpty()) {
+            $comAlvara = \App\Models\DocumentoDigital::query()
+                ->whereIn('processo_id', $processos->pluck('id'))
+                ->where('status', 'assinado')
+                ->whereHas('tipoDocumento', fn ($q) => $q->where('codigo', 'alvara_sanitario'))
+                ->pluck('processo_id')
+                ->unique()
+                ->flip();
+        }
+
+        // Checklist de documentos obrigatórios só para quem ainda não tem alvará (mesma regra da tela de Processos)
+        $semAlvara = $processos->reject(fn ($p) => $comAlvara->has($p->id))->values();
+        if ($semAlvara->isNotEmpty()) {
+            $semAlvara->load(['documentos', 'pastas', 'unidades']);
+        }
+
+        return $linhas->map(function ($linha) use ($tipo, $comAlvara) {
+            $processo = $linha['demandas'][$tipo]['processo'] ?? null;
+
+            if (!$processo) {
+                $etapa = 'nao_abriu';
+            } elseif ($comAlvara->has($processo->id)) {
+                $etapa = 'com_alvara';
+            } else {
+                $processo->setRelation('estabelecimento', $linha['estabelecimento']);
+                $obrigatorios = $processo->getDocumentosObrigatoriosChecklist()->where('obrigatorio', true);
+                $completo = $obrigatorios->isEmpty() || $obrigatorios->every(fn ($d) => $d['status'] === 'aprovado');
+                $etapa = $completo ? 'doc_completa' : 'doc_incompleta';
+            }
+
+            $linha['etapa'] = $etapa;
+            $linha['etapa_label'] = [
+                'nao_abriu' => 'Não abriu',
+                'com_alvara' => 'Com alvará sanitário',
+                'doc_completa' => $tipo === 'licenciamento' ? 'Doc. completa · sem alvará' : 'Doc. completa',
+                'doc_incompleta' => 'Doc. incompleta',
+            ][$etapa];
+
+            return $linha;
+        });
     }
 
     private function montarLinha(Estabelecimento $e, Collection $tipos, array $filtros): array
@@ -302,6 +366,7 @@ class RelatorioEstabelecimentoController extends Controller
                         'com_ativo' => $l['processos_ativos']->isNotEmpty(),
                         'sem_ativo' => $l['processos_ativos']->isEmpty(),
                         'sem_exigencia' => $l['situacao'] === 'sem_exigencia',
+                        'com_alvara', 'doc_completa', 'doc_incompleta' => ($l['etapa'] ?? null) === $filtros['situacao'],
                         default => true,
                     };
                 });
@@ -341,6 +406,10 @@ class RelatorioEstabelecimentoController extends Controller
             'processos_ativos' => $ativos->count(),
             'processos_parados' => $ativos->where('status', 'parado')->count(),
             'por_tipo' => $porTipo,
+            // Etapas (só quando há um tipo de processo escolhido)
+            'com_alvara' => $linhas->where('etapa', 'com_alvara')->count(),
+            'doc_completa' => $linhas->where('etapa', 'doc_completa')->count(),
+            'doc_incompleta' => $linhas->where('etapa', 'doc_incompleta')->count(),
             'estadual' => $linhas->where('competencia', 'estadual')->count(),
             'municipal' => $linhas->where('competencia', 'municipal')->count(),
             'ano' => $filtros['ano'],
