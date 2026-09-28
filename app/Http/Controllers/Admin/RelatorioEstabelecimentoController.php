@@ -38,12 +38,13 @@ class RelatorioEstabelecimentoController extends Controller
         $usuario = auth('interno')->user();
         $filtros = $this->filtros($request, $usuario);
         $tipos = $this->tiposControlados();
+        $tiposFoco = $this->tiposFoco($tipos, $filtros);
 
-        $linhas = $this->montarLinhas($usuario, $filtros, $tipos);
+        $linhas = $this->montarLinhas($usuario, $filtros, $tiposFoco);
         $linhasFiltradas = $this->aplicarFiltrosLinhas($linhas, $filtros);
 
-        $indicadores = $this->indicadores($linhas, $tipos, $filtros);
-        $graficos = $this->graficos($linhas, $tipos, $filtros, $usuario);
+        $indicadores = $this->indicadores($linhas, $tiposFoco, $filtros);
+        $graficos = $this->graficos($linhas, $tiposFoco, $filtros, $usuario);
 
         $estabelecimentos = $this->paginar($linhasFiltradas, 20, $request);
 
@@ -68,7 +69,7 @@ class RelatorioEstabelecimentoController extends Controller
     {
         $usuario = auth('interno')->user();
         $filtros = $this->filtros($request, $usuario);
-        $tipos = $this->tiposControlados();
+        $tipos = $this->tiposFoco($this->tiposControlados(), $filtros);
         $linhas = $this->aplicarFiltrosLinhas($this->montarLinhas($usuario, $filtros, $tipos), $filtros);
 
         $nomeArquivo = 'relatorio-estabelecimentos-processos-' . now()->format('Y-m-d-His') . '.csv';
@@ -143,6 +144,16 @@ class RelatorioEstabelecimentoController extends Controller
             ->keyBy('codigo');
     }
 
+    /**
+     * Quando o usuário escolhe um "Processo exigido", o relatório passa a considerar
+     * somente esse tipo (demandas, situação, processos ativos, indicadores e gráficos).
+     */
+    private function tiposFoco(Collection $tipos, array $filtros): Collection
+    {
+        // Obs.: em Eloquent\Collection o only() filtra pela chave primária do model, não pelo código
+        return $filtros['tipo'] ? $tipos->filter(fn ($tipo, $codigo) => $codigo === $filtros['tipo']) : $tipos;
+    }
+
     private function montarLinhas(UsuarioInterno $usuario, array $filtros, Collection $tipos): Collection
     {
         $query = Estabelecimento::query()
@@ -183,6 +194,8 @@ class RelatorioEstabelecimentoController extends Controller
         return $query->orderByRaw('COALESCE(nome_fantasia, razao_social) asc')->get()
             ->map(fn (Estabelecimento $e) => $this->montarLinha($e, $tipos, $filtros))
             ->filter(fn ($linha) => $this->dentroDoEscopo($linha, $usuario, $filtros['competencia']))
+            // Com tipo escolhido, só entram estabelecimentos que exigem esse processo
+            ->when($filtros['tipo'], fn ($c) => $c->filter(fn ($linha) => isset($linha['demandas'][$filtros['tipo']])))
             ->values();
     }
 
@@ -223,7 +236,12 @@ class RelatorioEstabelecimentoController extends Controller
             ];
         }
 
-        $processosAtivos = $e->processos->reject(fn ($p) => in_array($p->status, self::STATUS_INATIVOS, true))->values();
+        // Com tipo escolhido, processos ativos/último processo/aberturas consideram só esse tipo
+        $processosConsiderados = $filtros['tipo']
+            ? $e->processos->where('tipo', $filtros['tipo'])->values()
+            : $e->processos;
+
+        $processosAtivos = $processosConsiderados->reject(fn ($p) => in_array($p->status, self::STATUS_INATIVOS, true))->values();
         $pendente = collect($demandas)->contains(fn ($d) => !$d['atendida']);
 
         if (empty($demandas)) {
@@ -246,8 +264,8 @@ class RelatorioEstabelecimentoController extends Controller
             'municipio' => $municipio?->nome ?? ($e->cidade ?: '—'),
             'demandas' => $demandas,
             'processos_ativos' => $processosAtivos,
-            'processos' => $e->processos,
-            'ultimo_processo' => $e->processos->first()?->created_at,
+            'processos' => $processosConsiderados,
+            'ultimo_processo' => $processosConsiderados->first()?->created_at,
             'situacao' => $situacao,
             'situacao_label' => $situacaoLabel,
         ];

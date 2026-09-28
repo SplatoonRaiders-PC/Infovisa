@@ -1,6 +1,7 @@
 @extends('layouts.admin')
 
 @section('title', 'Relatório de Estabelecimentos e Processos')
+@section('page-title', 'Relatório de Estabelecimentos e Processos')
 
 @section('content')
 @php
@@ -111,6 +112,25 @@
             </div>
         </div>
     </form>
+
+    @if($filtros['tipo'] && isset($tipos[$filtros['tipo']]))
+        @php $corFoco = $coresTipo[$iconesTipo[$filtros['tipo']]['cor'] ?? 'blue']; @endphp
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl {{ $corFoco['bg'] }} {{ $corFoco['text'] }} flex items-center justify-center flex-shrink-0">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ $iconesTipo[$filtros['tipo']]['icone'] ?? '' }}"/></svg>
+                </div>
+                <div>
+                    <p class="text-sm font-semibold text-slate-900">Visualizando somente: {{ $tipos[$filtros['tipo']]->nome }}</p>
+                    <p class="text-[11px] text-slate-500">Indicadores, gráficos, situação e processos ativos consideram apenas estabelecimentos que exigem este processo e somente processos deste tipo.</p>
+                </div>
+            </div>
+            <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(request()->except(['page', 'tipo']))) }}"
+               class="self-start sm:self-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition whitespace-nowrap">
+                Ver todos os tipos
+            </a>
+        </div>
+    @endif
 
     {{-- Indicadores principais --}}
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
