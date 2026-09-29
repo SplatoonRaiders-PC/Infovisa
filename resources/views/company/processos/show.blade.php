@@ -1329,6 +1329,13 @@
                         </label>
                         @endforeach
                     </div>
+                    <div class="mt-4">
+                        <label for="nome_unidade_company" class="block text-sm font-medium text-slate-700 mb-1">Nome da unidade <span class="text-slate-400 font-normal">(opcional)</span></label>
+                        <input type="text" id="nome_unidade_company" name="nome_unidade" maxlength="255"
+                               placeholder="Ex.: UTI Pediátrica, PS Infantil, Centro Cirúrgico"
+                               class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500">
+                        <p class="text-xs text-slate-500 mt-1">Identifique a unidade. Se deixar em branco, será usado o nome do tipo selecionado.</p>
+                    </div>
                     <div class="flex items-center gap-3 mt-6 pt-4 border-t border-slate-200">
                         <button type="submit" class="px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition">
                             Adicionar Unidade

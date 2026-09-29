@@ -348,7 +348,18 @@
 
     {{-- Gerenciar Conclusão de Pastas/Unidades (apenas processos de Projeto Arquitetônico com pastas e que ainda não estão arquivados) --}}
     @php
-        $pastasGerenciaveis = $processo->pastas()->withCount(['documentos', 'documentosDigitais'])->with('unidade')->orderBy('ordem')->get();
+        // Arquivos rejeitados não impedem a exclusão da unidade (são removidos junto)
+        $pastasGerenciaveis = $processo->pastas()
+            ->withCount([
+                'documentos as documentos_validos_count' => fn ($q) => $q->where(fn ($s) => $s->whereNull('status_aprovacao')->orWhere('status_aprovacao', '!=', 'rejeitado')),
+                'documentos as documentos_rejeitados_count' => fn ($q) => $q->where('status_aprovacao', 'rejeitado'),
+                'documentosDigitais',
+            ])
+            ->with('unidade')
+            ->orderBy('ordem')
+            ->get();
+        $osPorPasta = \App\Models\OrdemServico::whereIn('pasta_id', $pastasGerenciaveis->pluck('id'))
+            ->selectRaw('pasta_id, count(*) as total')->groupBy('pasta_id')->pluck('total', 'pasta_id');
         $isProjetoArquitetonico = $processo->tipoProcesso && $processo->tipoProcesso->codigo === 'projeto_arquitetonico';
         $podeGerenciarUnidadesProcesso = in_array(auth('interno')->user()->nivel_acesso->value, ['administrador', 'gestor_estadual', 'gestor_municipal', 'tecnico_estadual', 'tecnico_municipal']);
     @endphp
@@ -389,7 +400,8 @@
             @endif
             @foreach($pastasGerenciaveis as $pastaG)
             @php
-                $itensPastaG = ($pastaG->documentos_count ?? 0) + ($pastaG->documentos_digitais_count ?? 0);
+                $itensPastaG = ($pastaG->documentos_validos_count ?? 0) + ($pastaG->documentos_digitais_count ?? 0) + (int) ($osPorPasta[$pastaG->id] ?? 0);
+                $rejeitadosPastaG = (int) ($pastaG->documentos_rejeitados_count ?? 0);
             @endphp
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg {{ $pastaG->status === 'concluida' ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-50 border border-slate-200' }}">
                 <div class="flex items-center gap-3 flex-1 min-w-0">
@@ -429,7 +441,7 @@
                         @else
                             <form action="{{ route('admin.estabelecimentos.processos.unidade.excluir', [$estabelecimento->id, $processo->id, $pastaG->id]) }}" method="POST" class="inline">
                                 @csrf
-                                <button type="submit" onclick="return confirm('Excluir a unidade {{ addslashes($pastaG->nome) }} do processo? Esta ação não pode ser desfeita.')"
+                                <button type="submit" onclick="return confirm('Excluir a unidade {{ addslashes($pastaG->nome) }} do processo?{{ $rejeitadosPastaG > 0 ? ' Os ' . $rejeitadosPastaG . ' arquivo(s) rejeitado(s) desta unidade também serão removidos.' : '' }} Esta ação não pode ser desfeita.')"
                                         class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                                     Excluir
@@ -7343,6 +7355,13 @@ function scrollParaDocumento(docId) {
                         </div>
                     </label>
                     @endforeach
+                </div>
+                <div class="mt-4">
+                    <label for="nome_unidade_admin" class="block text-sm font-medium text-slate-700 mb-1">Nome da unidade <span class="text-slate-400 font-normal">(opcional)</span></label>
+                    <input type="text" id="nome_unidade_admin" name="nome_unidade" maxlength="255"
+                           placeholder="Ex.: UTI Pediátrica, PS Infantil, Centro Cirúrgico"
+                           class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500">
+                    <p class="text-xs text-slate-500 mt-1">Se deixar em branco, será usado o nome do tipo selecionado.</p>
                 </div>
                 <div class="flex items-center gap-3 mt-6 pt-4 border-t border-slate-200">
                     <button type="submit" class="px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition">

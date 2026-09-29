@@ -3847,6 +3847,7 @@ TXT;
 
             $request->validate([
                 'unidade_id' => 'required|exists:unidades,id',
+                'nome_unidade' => 'nullable|string|max:255',
             ]);
 
             $unidadeId = (int) $request->unidade_id;
@@ -3862,6 +3863,10 @@ TXT;
             $nomePasta = $unidade->nome;
             if ($pastasExistentes > 0) {
                 $nomePasta = $unidade->nome . ' (' . ($pastasExistentes + 1) . ')';
+            }
+            // Nome informado pelo usuário (ex.: "UTI Pediátrica") tem prioridade sobre o automático
+            if (filled($request->nome_unidade)) {
+                $nomePasta = trim($request->nome_unidade);
             }
 
             $cores = ['#8B5CF6', '#EC4899', '#06B6D4', '#F59E0B', '#10B981', '#EF4444'];
@@ -4164,7 +4169,8 @@ TXT;
                 ->whereNotNull('unidade_id')
                 ->findOrFail($pastaId);
 
-            $totalItens = $pasta->documentos()->count()
+            // Arquivos rejeitados não contam como documento da unidade
+            $totalItens = $pasta->documentos()->where(fn ($q) => $q->whereNull('status_aprovacao')->orWhere('status_aprovacao', '!=', 'rejeitado'))->count()
                 + $pasta->documentosDigitais()->count()
                 + \App\Models\OrdemServico::where('pasta_id', $pasta->id)->count();
 
@@ -4175,19 +4181,41 @@ TXT;
 
             $nomeUnidade = $pasta->nome;
 
-            DB::transaction(function () use ($processo, $pasta, $nomeUnidade) {
+            // Arquivos rejeitados da unidade são excluídos junto: se fossem para a raiz do processo
+            // (pasta_id nulo), poderiam passar a contar como o envio mais recente no checklist da raiz.
+            $rejeitados = $pasta->documentos()->where('status_aprovacao', 'rejeitado')->get();
+
+            DB::transaction(function () use ($processo, $pasta, $nomeUnidade, $rejeitados) {
                 $unidadeId = (int) $pasta->unidade_id;
+                foreach ($rejeitados as $rejeitado) {
+                    $rejeitado->delete();
+                }
                 $pasta->delete();
                 $this->desvincularUnidadeSemPastas($processo, $unidadeId);
+
+                $descricao = "Unidade '{$nomeUnidade}' excluída do processo.";
+                if ($rejeitados->isNotEmpty()) {
+                    $descricao .= ' Arquivos rejeitados removidos junto: ' . $rejeitados->pluck('nome_original')->filter()->implode(', ') . '.';
+                }
 
                 ProcessoEvento::create([
                     'processo_id' => $processo->id,
                     'usuario_interno_id' => Auth::guard('interno')->user()->id,
                     'tipo_evento' => 'movimentacao',
                     'titulo' => "Unidade excluída: {$nomeUnidade}",
-                    'descricao' => "Unidade '{$nomeUnidade}' excluída do processo.",
+                    'descricao' => $descricao,
                 ]);
             });
+
+            // Remove os arquivos físicos só depois de confirmar a exclusão no banco
+            foreach ($rejeitados as $rejeitado) {
+                if ($rejeitado->caminho) {
+                    $caminhoCompleto = storage_path('app') . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rejeitado->caminho);
+                    if (file_exists($caminhoCompleto)) {
+                        @unlink($caminhoCompleto);
+                    }
+                }
+            }
 
             return redirect()
                 ->route('admin.estabelecimentos.processos.show', [$estabelecimentoId, $processoId])

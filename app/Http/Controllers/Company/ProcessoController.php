@@ -1068,6 +1068,7 @@ class ProcessoController extends Controller
 
         $request->validate([
             'unidade_id' => 'required|exists:unidades,id',
+            'nome_unidade' => 'nullable|string|max:255',
         ]);
 
         $unidadeId = $request->unidade_id;
@@ -1086,6 +1087,10 @@ class ProcessoController extends Controller
         $nomePasta = $unidade->nome;
         if ($pastasExistentes > 0) {
             $nomePasta = $unidade->nome . ' (' . ($pastasExistentes + 1) . ')';
+        }
+        // Nome informado pelo usuário (ex.: "UTI Pediátrica") tem prioridade sobre o automático
+        if (filled($request->nome_unidade)) {
+            $nomePasta = trim($request->nome_unidade);
         }
 
         // Cria a pasta automática
