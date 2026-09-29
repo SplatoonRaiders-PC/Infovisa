@@ -348,10 +348,11 @@
 
     {{-- Gerenciar Conclusão de Pastas/Unidades (apenas processos de Projeto Arquitetônico com pastas e que ainda não estão arquivados) --}}
     @php
-        $pastasGerenciaveis = $processo->pastas()->orderBy('ordem')->get();
+        $pastasGerenciaveis = $processo->pastas()->withCount(['documentos', 'documentosDigitais'])->with('unidade')->orderBy('ordem')->get();
         $isProjetoArquitetonico = $processo->tipoProcesso && $processo->tipoProcesso->codigo === 'projeto_arquitetonico';
+        $podeGerenciarUnidadesProcesso = in_array(auth('interno')->user()->nivel_acesso->value, ['administrador', 'gestor_estadual', 'gestor_municipal', 'tecnico_estadual', 'tecnico_municipal']);
     @endphp
-    @if($isProjetoArquitetonico && $pastasGerenciaveis->count() > 0 && $processo->status !== 'arquivado' && in_array(auth('interno')->user()->nivel_acesso->value, ['administrador', 'gestor_estadual', 'gestor_municipal', 'tecnico_estadual', 'tecnico_municipal']))
+    @if(($isProjetoArquitetonico || ($tipoProcessoTemUnidades ?? false)) && $pastasGerenciaveis->count() > 0 && $processo->status !== 'arquivado' && $podeGerenciarUnidadesProcesso)
     <div class="mb-4 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden" x-data="{ aberto: false }">
         <button @click="aberto = !aberto" type="button"
                 class="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors">
@@ -362,13 +363,13 @@
                     </svg>
                 </div>
                 <div class="text-left">
-                    <p class="text-sm font-semibold text-slate-900">Conclusão por Unidade/Pasta</p>
+                    <p class="text-sm font-semibold text-slate-900">Unidades do Processo</p>
                     <p class="text-xs text-slate-500">
                         @php
                             $totalPastasG = $pastasGerenciaveis->count();
                             $concluidasG = $pastasGerenciaveis->where('status', 'concluida')->count();
                         @endphp
-                        {{ $concluidasG }}/{{ $totalPastasG }} concluídas — defira individualmente cada unidade
+                        {{ $concluidasG }}/{{ $totalPastasG }} concluídas — edite, exclua ou defira individualmente cada unidade
                     </p>
                 </div>
             </div>
@@ -377,12 +378,29 @@
             </svg>
         </button>
         <div x-show="aberto" x-cloak x-collapse class="border-t border-slate-100 px-5 py-4 space-y-2">
+            @if(($tipoProcessoTemUnidades ?? false) && in_array($processo->status, ['aberto', 'parado']))
+            <div class="flex justify-end">
+                <button type="button" onclick="document.getElementById('modal-nova-unidade-admin').classList.remove('hidden')"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg transition">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    Adicionar unidade
+                </button>
+            </div>
+            @endif
             @foreach($pastasGerenciaveis as $pastaG)
-            <div class="flex items-center justify-between gap-3 p-3 rounded-lg {{ $pastaG->status === 'concluida' ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-50 border border-slate-200' }}">
+            @php
+                $itensPastaG = ($pastaG->documentos_count ?? 0) + ($pastaG->documentos_digitais_count ?? 0);
+            @endphp
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg {{ $pastaG->status === 'concluida' ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-50 border border-slate-200' }}">
                 <div class="flex items-center gap-3 flex-1 min-w-0">
                     <span class="w-3 h-3 rounded-full flex-shrink-0" style="background-color: {{ $pastaG->cor ?? '#3B82F6' }}"></span>
                     <div class="min-w-0 flex-1">
-                        <p class="text-sm font-semibold text-slate-900">{{ $pastaG->nome }}</p>
+                        <p class="text-sm font-semibold text-slate-900">
+                            {{ $pastaG->nome }}
+                            @if($pastaG->unidade && $pastaG->unidade->nome !== $pastaG->nome)
+                                <span class="ml-1 text-[11px] font-medium text-violet-600">({{ $pastaG->unidade->nome }})</span>
+                            @endif
+                        </p>
                         @if($pastaG->status === 'concluida')
                             <p class="text-xs text-emerald-700 mt-0.5">
                                 ✓ Concluída em {{ $pastaG->data_conclusao?->format('d/m/Y H:i') }} —
@@ -393,7 +411,32 @@
                         @endif
                     </div>
                 </div>
-                <div class="flex items-center gap-2 flex-shrink-0">
+                <div class="flex flex-wrap items-center gap-2 flex-shrink-0">
+                    @if($pastaG->unidade_id)
+                        <button type="button"
+                                @click="$dispatch('open-modal-editar-unidade', { pastaId: {{ $pastaG->id }}, nome: @js($pastaG->nome), unidadeId: {{ (int) $pastaG->unidade_id }} })"
+                                class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            Editar
+                        </button>
+                        @if($itensPastaG > 0)
+                            <button type="button" disabled
+                                    title="A unidade possui {{ $itensPastaG }} {{ $itensPastaG == 1 ? 'item' : 'itens' }}. Mova ou exclua os documentos antes de excluir a unidade."
+                                    class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-400 bg-white border border-slate-200 rounded-lg cursor-not-allowed">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                Excluir
+                            </button>
+                        @else
+                            <form action="{{ route('admin.estabelecimentos.processos.unidade.excluir', [$estabelecimento->id, $processo->id, $pastaG->id]) }}" method="POST" class="inline">
+                                @csrf
+                                <button type="submit" onclick="return confirm('Excluir a unidade {{ addslashes($pastaG->nome) }} do processo? Esta ação não pode ser desfeita.')"
+                                        class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                    Excluir
+                                </button>
+                            </form>
+                        @endif
+                    @endif
                     @if($pastaG->status === 'concluida')
                         <span class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-100 rounded-full">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
@@ -417,6 +460,61 @@
                 </div>
             </div>
             @endforeach
+        </div>
+    </div>
+
+    {{-- Modal: Editar Unidade --}}
+    @php
+        $opcoesUnidadeEdicao = ($unidadesDisponiveis ?? collect())
+            ->merge($pastasGerenciaveis->pluck('unidade')->filter())
+            ->unique('id')
+            ->sortBy('nome')
+            ->values();
+    @endphp
+    <div x-data="{ aberto: false, pastaId: null, nome: '', unidadeId: '' }"
+        @open-modal-editar-unidade.window="aberto = true; pastaId = $event.detail.pastaId; nome = $event.detail.nome; unidadeId = String($event.detail.unidadeId)"
+        @keydown.escape.window="aberto = false"
+        x-show="aberto" x-cloak
+        class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-black/50" @click="aberto = false"></div>
+            <div x-show="aberto" x-transition class="relative bg-white rounded-xl shadow-xl max-w-md w-full">
+                <form :action="`{{ url('admin/estabelecimentos/' . $estabelecimento->id . '/processos/' . $processo->id . '/unidades') }}/${pastaId}/editar`" method="POST">
+                    @csrf
+                    <div class="px-6 py-5 border-b border-slate-200">
+                        <h3 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            Editar Unidade
+                        </h3>
+                        <p class="text-xs text-slate-500 mt-1">A alteração fica registrada no histórico do processo.</p>
+                    </div>
+                    <div class="px-6 py-5 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Nome da unidade *</label>
+                            <input type="text" name="nome" x-model="nome" required maxlength="255"
+                                   class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500">
+                            <p class="text-xs text-slate-500 mt-1">Ex.: "PS Infantil", "UTI Adulto (2)".</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Tipo de unidade *</label>
+                            <select name="unidade_id" x-model="unidadeId" required
+                                    class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500">
+                                @foreach($opcoesUnidadeEdicao as $opcaoUnidade)
+                                    <option value="{{ $opcaoUnidade->id }}">{{ $opcaoUnidade->nome }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                    </div>
+                    <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3 rounded-b-xl">
+                        <button type="button" @click="aberto = false" class="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">
+                            Cancelar
+                        </button>
+                        <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-lg">
+                            Salvar alterações
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -1253,8 +1351,10 @@
                         </svg>
                         Pastas Processo
                     </button>
+                    @endif
 
-                    @if(($tipoProcessoTemUnidades ?? false) && $processo->status === 'aberto')
+                    {{-- Adicionar unidade: também disponível com o processo parado --}}
+                    @if(($tipoProcessoTemUnidades ?? false) && in_array($processo->status, ['aberto', 'parado']))
                     <button type="button" onclick="document.getElementById('modal-nova-unidade-admin').classList.remove('hidden')"
                             class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-lg transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1263,7 +1363,8 @@
                         Adicionar Unidade
                     </button>
                     @endif
-                    
+
+                    @if($processo->status !== 'arquivado' && $processo->status !== 'parado')
                     <button @click="modalParar = true" class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -7217,7 +7318,7 @@ function scrollParaDocumento(docId) {
 @endpush
 
 {{-- Modal Adicionar Unidade (Admin/Gestor/Tecnico) --}}
-@if(($tipoProcessoTemUnidades ?? false) && $processo->status === 'aberto')
+@if(($tipoProcessoTemUnidades ?? false) && in_array($processo->status, ['aberto', 'parado']))
 <div id="modal-nova-unidade-admin" class="hidden fixed inset-0 z-50 overflow-y-auto">
     <div class="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm" onclick="document.getElementById('modal-nova-unidade-admin').classList.add('hidden')"></div>
     <div class="flex min-h-full items-center justify-center p-4">

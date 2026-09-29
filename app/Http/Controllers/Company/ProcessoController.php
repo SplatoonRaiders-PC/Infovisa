@@ -1055,9 +1055,9 @@ class ProcessoController extends Controller
             ->with(['tipoProcesso'])
             ->findOrFail($id);
 
-        // Só permite em processos abertos
-        if ($processo->status !== 'aberto') {
-            return back()->with('error', 'Só é possível adicionar unidades em processos abertos.');
+        // Permite em processos abertos ou parados (ex.: unidade indeferida aguardando nova unidade)
+        if (!in_array($processo->status, ['aberto', 'parado'])) {
+            return back()->with('error', 'Só é possível adicionar unidades em processos abertos ou parados.');
         }
 
         // Verifica se o tipo de processo tem unidades

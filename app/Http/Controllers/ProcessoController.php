@@ -3836,8 +3836,8 @@ TXT;
                 ->with('tipoProcesso')
                 ->findOrFail($processoId);
 
-            if ($processo->status !== 'aberto') {
-                return back()->with('error', 'Só é possível adicionar unidades em processos abertos.');
+            if (!in_array($processo->status, ['aberto', 'parado'])) {
+                return back()->with('error', 'Só é possível adicionar unidades em processos abertos ou parados.');
             }
 
             $unidadesDoTipo = $processo->tipoProcesso->unidades()->ativas()->pluck('unidades.id')->toArray();
@@ -4026,6 +4026,175 @@ TXT;
 
         } catch (\Exception $e) {
             return back()->with('error', 'Erro ao retomar unidade: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Perfis internos que podem gerenciar (editar/excluir) as unidades de um processo
+     */
+    private function podeGerenciarUnidades(): bool
+    {
+        $nivel = auth('interno')->user()->nivel_acesso->value ?? null;
+
+        return in_array($nivel, ['administrador', 'gestor_estadual', 'gestor_municipal', 'tecnico_estadual', 'tecnico_municipal']);
+    }
+
+    /**
+     * Mantém o vínculo processo x unidade coerente com as pastas: remove o vínculo
+     * quando nenhuma pasta do processo usa mais aquela unidade.
+     */
+    private function desvincularUnidadeSemPastas(Processo $processo, ?int $unidadeId): void
+    {
+        if ($unidadeId && !$processo->pastas()->where('unidade_id', $unidadeId)->exists()) {
+            $processo->unidades()->detach($unidadeId);
+        }
+    }
+
+    /**
+     * Edita uma unidade do processo (nome e/ou tipo de unidade)
+     */
+    public function editarUnidade(Request $request, $estabelecimentoId, $processoId, $pastaId)
+    {
+        $estabelecimento = Estabelecimento::findOrFail($estabelecimentoId);
+        $this->validarPermissaoAcesso($estabelecimento);
+
+        if (!$this->podeGerenciarUnidades()) {
+            return back()->with('error', 'Você não tem permissão para editar unidades do processo.');
+        }
+
+        $request->validate([
+            'nome' => 'required|string|max:255',
+            'unidade_id' => 'required|exists:unidades,id',
+        ], [
+            'nome.required' => 'Informe o nome da unidade.',
+            'unidade_id.required' => 'Selecione o tipo de unidade.',
+        ]);
+
+        try {
+            $processo = Processo::where('estabelecimento_id', $estabelecimentoId)
+                ->with('tipoProcesso')
+                ->findOrFail($processoId);
+
+            if ($processo->status === 'arquivado') {
+                return back()->with('error', 'Não é possível editar unidades de um processo arquivado.');
+            }
+
+            $pasta = \App\Models\ProcessoPasta::where('processo_id', $processo->id)
+                ->whereNotNull('unidade_id')
+                ->findOrFail($pastaId);
+
+            $unidadeId = (int) $request->unidade_id;
+            $unidadesDoTipo = $processo->tipoProcesso?->unidades()->ativas()->pluck('unidades.id')->toArray() ?? [];
+            if ($unidadeId !== (int) $pasta->unidade_id && !in_array($unidadeId, $unidadesDoTipo)) {
+                return back()->with('error', 'Esta unidade não está disponível para este tipo de processo.');
+            }
+
+            $nomeAnterior = $pasta->nome;
+            $unidadeAnteriorId = (int) $pasta->unidade_id;
+            $nomeNovo = trim($request->nome);
+
+            if ($nomeNovo === $nomeAnterior && $unidadeId === $unidadeAnteriorId) {
+                return back()->with('success', 'Nenhuma alteração realizada.');
+            }
+
+            DB::transaction(function () use ($processo, $pasta, $nomeAnterior, $nomeNovo, $unidadeId, $unidadeAnteriorId) {
+                $dados = ['nome' => $nomeNovo, 'unidade_id' => $unidadeId];
+
+                // Atualiza a descrição automática ("Documentos da unidade X")
+                if (!$pasta->descricao || str_starts_with($pasta->descricao, 'Documentos da unidade')) {
+                    $dados['descricao'] = 'Documentos da unidade ' . $nomeNovo;
+                }
+
+                $pasta->update($dados);
+
+                if ($unidadeId !== $unidadeAnteriorId) {
+                    $processo->unidades()->syncWithoutDetaching([$unidadeId]);
+                    $this->desvincularUnidadeSemPastas($processo, $unidadeAnteriorId);
+                }
+
+                $tipoAnterior = Unidade::find($unidadeAnteriorId)?->nome;
+                $tipoNovo = Unidade::find($unidadeId)?->nome;
+                $mudancas = [];
+                if ($nomeNovo !== $nomeAnterior) {
+                    $mudancas[] = "nome '{$nomeAnterior}' → '{$nomeNovo}'";
+                }
+                if ($unidadeId !== $unidadeAnteriorId) {
+                    $mudancas[] = "tipo '{$tipoAnterior}' → '{$tipoNovo}'";
+                }
+
+                ProcessoEvento::create([
+                    'processo_id' => $processo->id,
+                    'usuario_interno_id' => Auth::guard('interno')->user()->id,
+                    'tipo_evento' => 'movimentacao',
+                    'titulo' => "Unidade editada: {$nomeNovo}",
+                    'descricao' => 'Unidade editada: ' . implode('; ', $mudancas) . '.',
+                ]);
+            });
+
+            return redirect()
+                ->route('admin.estabelecimentos.processos.show', [$estabelecimentoId, $processoId])
+                ->with('success', "Unidade '{$nomeNovo}' atualizada com sucesso!");
+
+        } catch (\Exception $e) {
+            return back()->with('error', 'Erro ao editar unidade: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Exclui uma unidade do processo. Só é permitido quando a pasta da unidade
+     * está vazia, para não perder nem misturar documentos de outras unidades.
+     */
+    public function excluirUnidade($estabelecimentoId, $processoId, $pastaId)
+    {
+        $estabelecimento = Estabelecimento::findOrFail($estabelecimentoId);
+        $this->validarPermissaoAcesso($estabelecimento);
+
+        if (!$this->podeGerenciarUnidades()) {
+            return back()->with('error', 'Você não tem permissão para excluir unidades do processo.');
+        }
+
+        try {
+            $processo = Processo::where('estabelecimento_id', $estabelecimentoId)->findOrFail($processoId);
+
+            if ($processo->status === 'arquivado') {
+                return back()->with('error', 'Não é possível excluir unidades de um processo arquivado.');
+            }
+
+            $pasta = \App\Models\ProcessoPasta::where('processo_id', $processo->id)
+                ->whereNotNull('unidade_id')
+                ->findOrFail($pastaId);
+
+            $totalItens = $pasta->documentos()->count()
+                + $pasta->documentosDigitais()->count()
+                + \App\Models\OrdemServico::where('pasta_id', $pasta->id)->count();
+
+            if ($totalItens > 0) {
+                return back()->with('error', "A unidade '{$pasta->nome}' possui {$totalItens} " . ($totalItens === 1 ? 'item' : 'itens')
+                    . ' (documentos/arquivos/OS). Mova ou exclua esses itens antes de excluir a unidade.');
+            }
+
+            $nomeUnidade = $pasta->nome;
+
+            DB::transaction(function () use ($processo, $pasta, $nomeUnidade) {
+                $unidadeId = (int) $pasta->unidade_id;
+                $pasta->delete();
+                $this->desvincularUnidadeSemPastas($processo, $unidadeId);
+
+                ProcessoEvento::create([
+                    'processo_id' => $processo->id,
+                    'usuario_interno_id' => Auth::guard('interno')->user()->id,
+                    'tipo_evento' => 'movimentacao',
+                    'titulo' => "Unidade excluída: {$nomeUnidade}",
+                    'descricao' => "Unidade '{$nomeUnidade}' excluída do processo.",
+                ]);
+            });
+
+            return redirect()
+                ->route('admin.estabelecimentos.processos.show', [$estabelecimentoId, $processoId])
+                ->with('success', "Unidade '{$nomeUnidade}' excluída com sucesso!");
+
+        } catch (\Exception $e) {
+            return back()->with('error', 'Erro ao excluir unidade: ' . $e->getMessage());
         }
     }
 
