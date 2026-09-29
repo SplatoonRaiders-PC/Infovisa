@@ -1521,8 +1521,31 @@
                 </div>
 
                 {{-- Tabs de Documentos --}}
+                @php
+                    // Unidades que podem ser excluídas direto pela aba: sem documentos válidos, digitais ou OS.
+                    // O valor é a quantidade de arquivos rejeitados (removidos junto na exclusão).
+                    $unidadesExcluiveisAba = ($podeGerenciarUnidadesProcesso ?? false) && $processo->status !== 'arquivado'
+                        ? $pastasGerenciaveis->filter(fn ($pg) => $pg->unidade_id
+                                && (($pg->documentos_validos_count ?? 0) + ($pg->documentos_digitais_count ?? 0) + (int) ($osPorPasta[$pg->id] ?? 0)) === 0)
+                            ->mapWithKeys(fn ($pg) => [$pg->id => (int) ($pg->documentos_rejeitados_count ?? 0)])
+                        : collect();
+                @endphp
+                <form id="form-excluir-unidade-aba" method="POST" class="hidden">@csrf</form>
                 <div class="border-b border-slate-200 bg-slate-50">
-                    <nav class="flex px-3 sm:px-6 overflow-x-auto" aria-label="Tabs">
+                    <nav class="flex px-3 sm:px-6 overflow-x-auto" aria-label="Tabs"
+                         x-data="{
+                            unidadesExcluiveisAba: @js((object) $unidadesExcluiveisAba->all()),
+                            excluirUnidadeAba(pasta) {
+                                const rejeitados = this.unidadesExcluiveisAba[pasta.id] || 0;
+                                let msg = `Excluir a unidade &quot;${pasta.nome}&quot; do processo?`;
+                                if (rejeitados > 0) msg += ` Os ${rejeitados} arquivo(s) rejeitado(s) desta unidade também serão removidos.`;
+                                msg += ' Esta ação não pode ser desfeita.';
+                                if (!confirm(msg)) return;
+                                const form = document.getElementById('form-excluir-unidade-aba');
+                                form.action = @js(url('admin/estabelecimentos/' . $estabelecimento->id . '/processos/' . $processo->id . '/unidades')) + '/' + pasta.id + '/excluir';
+                                form.submit();
+                            }
+                         }">
                         <button @click="pastaAtiva = null" 
                                 :class="pastaAtiva === null ? 'text-blue-600 border-blue-600' : 'text-slate-600 border-transparent hover:text-slate-800 hover:border-slate-300'"
                                 class="px-3 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold border-b-2 transition-colors whitespace-nowrap">
@@ -1535,19 +1558,31 @@
                         
                         {{-- Pastas Dinâmicas --}}
                         <template x-for="pasta in pastas" :key="pasta.id">
-                            <button @click="pastaAtiva = pasta.id"
-                                    :class="pastaAtiva === pasta.id ? 'border-b-2' : 'text-slate-600 border-transparent hover:text-slate-800 hover:border-slate-300'"
-                                    :style="pastaAtiva === pasta.id ? `color: ${pasta.cor}; border-color: ${pasta.cor}` : ''"
-                                    class="px-3 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-semibold border-b-2 transition-colors whitespace-nowrap flex items-center gap-2">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                                </svg>
-                                <span x-text="pasta.nome"></span>
-                                <span class="ml-1 px-2.5 py-0.5 text-xs font-semibold rounded-full"
-                                      :style="`background-color: ${pasta.cor}20; color: ${pasta.cor}`"
-                                      x-text="contarDocumentosPorPasta(pasta.id)">
-                                </span>
-                            </button>
+                            <div class="flex items-center border-b-2 transition-colors"
+                                 :class="pastaAtiva === pasta.id ? '' : 'border-transparent hover:border-slate-300'"
+                                 :style="pastaAtiva === pasta.id ? `border-color: ${pasta.cor}` : ''">
+                                <button @click="pastaAtiva = pasta.id"
+                                        :class="pastaAtiva === pasta.id ? '' : 'text-slate-600 hover:text-slate-800'"
+                                        :style="pastaAtiva === pasta.id ? `color: ${pasta.cor}` : ''"
+                                        class="pl-3 sm:pl-4 pr-2 py-3 sm:py-4 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap flex items-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                    </svg>
+                                    <span x-text="pasta.nome"></span>
+                                    <span class="ml-1 px-2.5 py-0.5 text-xs font-semibold rounded-full"
+                                          :style="`background-color: ${pasta.cor}20; color: ${pasta.cor}`"
+                                          x-text="contarDocumentosPorPasta(pasta.id)">
+                                    </span>
+                                </button>
+                                {{-- Excluir unidade sem documentos (também com o processo parado) --}}
+                                <button type="button"
+                                        x-show="unidadesExcluiveisAba[pasta.id] !== undefined"
+                                        @click.stop="excluirUnidadeAba(pasta)"
+                                        title="Excluir esta unidade (sem documentos)"
+                                        class="mr-2 sm:mr-3 p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                            </div>
                         </template>
                     </nav>
                 </div>
