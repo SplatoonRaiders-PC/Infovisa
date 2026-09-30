@@ -79,7 +79,7 @@ class RelatorioEstabelecimentoController extends Controller
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF");
 
-            $cabecalho = ['Estabelecimento', 'Razão social', 'CNPJ/CPF', 'Município', 'Competência', 'Situação'];
+            $cabecalho = ['Estabelecimento', 'Razão social', 'CNPJ/CPF', 'Município', 'Competência', 'Setor', 'Situação'];
             if ($filtros['tipo']) {
                 $cabecalho[] = 'Etapa';
             }
@@ -98,6 +98,7 @@ class RelatorioEstabelecimentoController extends Controller
                     $e->documento_formatado,
                     $linha['municipio'],
                     ucfirst($linha['competencia']),
+                    $linha['setor'] === 'publico' ? 'Público' : 'Privado',
                     $linha['situacao_label'],
                 ];
                 if ($filtros['tipo']) {
@@ -134,6 +135,7 @@ class RelatorioEstabelecimentoController extends Controller
             'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'com_alvara', 'doc_completa', 'doc_incompleta', 'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer'], true)
                 ? $request->input('situacao') : null,
             'status_estabelecimento' => $request->input('status_estabelecimento', 'aprovado') === 'todos' ? 'todos' : 'aprovado',
+            'setor' => in_array($request->input('setor'), ['publico', 'privado'], true) ? $request->input('setor') : null,
             'busca' => trim((string) $request->input('busca')),
         ];
     }
@@ -406,9 +408,12 @@ class RelatorioEstabelecimentoController extends Controller
 
         $municipio = $e->relationLoaded('municipioRelacionado') ? $e->getRelation('municipioRelacionado') : null;
 
+        $tipoSetor = $e->tipo_setor instanceof \App\Enums\TipoSetor ? $e->tipo_setor->value : ($e->tipo_setor ?: 'privado');
+
         return [
             'estabelecimento' => $e,
             'competencia' => $competencia,
+            'setor' => $tipoSetor === 'publico' ? 'publico' : 'privado',
             'municipio_id' => $e->municipio_id,
             'municipio' => $municipio?->nome ?? ($e->cidade ?: '—'),
             'demandas' => $demandas,
@@ -443,6 +448,7 @@ class RelatorioEstabelecimentoController extends Controller
 
         return $linhas
             ->when($tipo, fn ($c) => $c->filter(fn ($l) => isset($l['demandas'][$tipo])))
+            ->when($filtros['setor'], fn ($c) => $c->where('setor', $filtros['setor']))
             ->when($filtros['situacao'], function ($c) use ($filtros, $tipo) {
                 return $c->filter(function ($l) use ($filtros, $tipo) {
                     return match ($filtros['situacao']) {
@@ -468,6 +474,7 @@ class RelatorioEstabelecimentoController extends Controller
         $porTipo = $tipos->map(function ($tipo, $codigo) use ($linhas) {
             $com = $linhas->filter(fn ($l) => isset($l['demandas'][$codigo]));
             $atendidos = $com->filter(fn ($l) => $l['demandas'][$codigo]['atendida'])->count();
+            $naoAbriram = $com->reject(fn ($l) => $l['demandas'][$codigo]['atendida']);
 
             return [
                 'nome' => $tipo->nome,
@@ -476,6 +483,11 @@ class RelatorioEstabelecimentoController extends Controller
                 'atendidos' => $atendidos,
                 'pendentes' => $com->count() - $atendidos,
                 'cobertura' => $com->count() ? round($atendidos / $com->count() * 100) : null,
+                // Público x privado
+                'exigem_publico' => $com->where('setor', 'publico')->count(),
+                'exigem_privado' => $com->where('setor', 'privado')->count(),
+                'pendentes_publico' => $naoAbriram->where('setor', 'publico')->count(),
+                'pendentes_privado' => $naoAbriram->where('setor', 'privado')->count(),
             ];
         });
 
@@ -486,6 +498,10 @@ class RelatorioEstabelecimentoController extends Controller
             'com_ativo' => $linhas->filter(fn ($l) => $l['processos_ativos']->isNotEmpty())->count(),
             'sem_ativo' => $linhas->filter(fn ($l) => $l['processos_ativos']->isEmpty())->count(),
             'pendentes' => $pendentes->count(),
+            'pendentes_publico' => $pendentes->where('setor', 'publico')->count(),
+            'pendentes_privado' => $pendentes->where('setor', 'privado')->count(),
+            'publico' => $linhas->where('setor', 'publico')->count(),
+            'privado' => $linhas->where('setor', 'privado')->count(),
             'em_dia' => $linhas->where('situacao', 'em_dia')->count(),
             'sem_exigencia' => $linhas->where('situacao', 'sem_exigencia')->count(),
             'cobertura' => $comExigencia->count() ? round(($comExigencia->count() - $pendentes->count()) / $comExigencia->count() * 100) : null,

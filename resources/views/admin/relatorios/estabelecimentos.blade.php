@@ -8,6 +8,14 @@
     $usuarioLogado = auth('interno')->user();
     $queryBase = request()->except(['page', 'situacao']);
     $urlSituacao = fn ($s) => route('admin.relatorios.estabelecimentos', array_filter($queryBase + ['situacao' => $s]));
+    // "Não abriram" por setor (público/privado), opcionalmente de um tipo de processo
+    $urlPendenteSetor = function ($setor, $tipo = null) {
+        $params = array_merge(request()->except(['page', 'situacao', 'setor']), ['situacao' => 'pendente', 'setor' => $setor]);
+        if ($tipo) {
+            $params['tipo'] = $tipo;
+        }
+        return route('admin.relatorios.estabelecimentos', array_filter($params, fn ($v) => $v !== null && $v !== ''));
+    };
     $iconesTipo = [
         'licenciamento' => ['cor' => 'blue', 'icone' => 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'],
         'projeto_arquitetonico' => ['cor' => 'violet', 'icone' => 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4'],
@@ -75,7 +83,7 @@
     <form method="GET" action="{{ route('admin.relatorios.estabelecimentos') }}"
           class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
         @if($filtros['situacao'])<input type="hidden" name="situacao" value="{{ $filtros['situacao'] }}">@endif
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-8 gap-3 items-end">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-9 gap-3 items-end">
             <div>
                 <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Ano de referência</label>
                 <select name="ano" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
@@ -112,6 +120,14 @@
                     @foreach($tipos as $codigo => $tipo)
                         <option value="{{ $codigo }}" @selected($filtros['tipo'] === $codigo)>{{ $tipo->nome }}</option>
                     @endforeach
+                </select>
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Setor</label>
+                <select name="setor" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="">Público e privado</option>
+                    <option value="publico" @selected($filtros['setor'] === 'publico')>Público</option>
+                    <option value="privado" @selected($filtros['setor'] === 'privado')>Privado</option>
                 </select>
             </div>
             <div>
@@ -162,6 +178,10 @@
                 <span class="text-blue-600 font-semibold">{{ $fmt($indicadores['estadual']) }}</span> estaduais ·
                 <span class="text-emerald-600 font-semibold">{{ $fmt($indicadores['municipal']) }}</span> municipais
             </p>
+            <p class="text-[11px] text-slate-500">
+                <span class="text-indigo-600 font-semibold">{{ $fmt($indicadores['publico']) }}</span> públicos ·
+                <span class="text-slate-700 font-semibold">{{ $fmt($indicadores['privado']) }}</span> privados
+            </p>
         </div>
         @if($tipoFoco === 'licenciamento')
         <a href="{{ $urlSituacao('com_alvara') }}" class="bg-gradient-to-br from-emerald-50 to-white rounded-2xl border border-emerald-200 shadow-sm p-4 hover:ring-2 hover:ring-emerald-200 transition">
@@ -184,11 +204,24 @@
             <p class="text-[11px] text-slate-500 mt-1">{{ $fmt($indicadores['sem_ativo']) }} sem nenhum processo ativo</p>
         </a>
         @endif
-        <a href="{{ $urlSituacao('pendente') }}" class="relative bg-gradient-to-br from-red-50 to-white rounded-2xl border border-red-200 shadow-sm p-4 hover:ring-2 hover:ring-red-200 transition">
-            <p class="text-[11px] font-semibold text-red-700 uppercase tracking-wide">Precisam abrir processo</p>
-            <p class="text-2xl font-bold text-red-600 tabular-nums mt-1">{{ $fmt($indicadores['pendentes']) }}</p>
-            <p class="text-[11px] text-red-700/80 mt-1">têm atividade que exige processo e não abriram</p>
-        </a>
+        <div class="relative bg-gradient-to-br from-red-50 to-white rounded-2xl border border-red-200 shadow-sm p-4 hover:ring-2 hover:ring-red-200 transition">
+            <a href="{{ $urlPendenteSetor(null) }}" class="block">
+                <p class="text-[11px] font-semibold text-red-700 uppercase tracking-wide">Precisam abrir processo</p>
+                <p class="text-2xl font-bold text-red-600 tabular-nums mt-1">{{ $fmt($indicadores['pendentes']) }}</p>
+                <p class="text-[11px] text-red-700/80 mt-1">têm atividade que exige processo e não abriram</p>
+            </a>
+            {{-- Público x privado --}}
+            <div class="flex flex-wrap gap-1.5 mt-2">
+                <a href="{{ $urlPendenteSetor('publico') }}"
+                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ring-1 transition {{ $filtros['situacao'] === 'pendente' && $filtros['setor'] === 'publico' ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-indigo-50 text-indigo-700 ring-indigo-200 hover:bg-indigo-100' }}">
+                    🏛️ Público <span class="tabular-nums">{{ $fmt($indicadores['pendentes_publico']) }}</span>
+                </a>
+                <a href="{{ $urlPendenteSetor('privado') }}"
+                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ring-1 transition {{ $filtros['situacao'] === 'pendente' && $filtros['setor'] === 'privado' ? 'bg-slate-700 text-white ring-slate-700' : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50' }}">
+                    🏢 Privado <span class="tabular-nums">{{ $fmt($indicadores['pendentes_privado']) }}</span>
+                </a>
+            </div>
+        </div>
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
             <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Cobertura geral</p>
             <p class="text-2xl font-bold tabular-nums mt-1 {{ ($indicadores['cobertura'] ?? 0) >= 80 ? 'text-emerald-600' : (($indicadores['cobertura'] ?? 0) >= 50 ? 'text-amber-600' : 'text-red-600') }}">
@@ -236,6 +269,23 @@
                     <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(['tipo' => $codigo, 'situacao' => 'pendente'] + request()->except('page'))) }}"
                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold {{ $item['pendentes'] ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'bg-slate-50 text-slate-400' }}">
                         {{ $fmt($item['pendentes']) }} não abriram
+                    </a>
+                </div>
+                {{-- Público x privado --}}
+                <div class="mt-2 pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-[11px]">
+                    <a href="{{ $urlPendenteSetor('publico', $codigo) }}" class="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-indigo-50/60 hover:bg-indigo-100 transition">
+                        <span class="text-indigo-800 font-semibold">🏛️ Público</span>
+                        <span class="text-slate-600 tabular-nums">
+                            {{ $fmt($item['exigem_publico']) }} exigem ·
+                            <strong class="{{ $item['pendentes_publico'] ? 'text-red-700' : 'text-slate-400' }}">{{ $fmt($item['pendentes_publico']) }} não abriram</strong>
+                        </span>
+                    </a>
+                    <a href="{{ $urlPendenteSetor('privado', $codigo) }}" class="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 transition">
+                        <span class="text-slate-800 font-semibold">🏢 Privado</span>
+                        <span class="text-slate-600 tabular-nums">
+                            {{ $fmt($item['exigem_privado']) }} exigem ·
+                            <strong class="{{ $item['pendentes_privado'] ? 'text-red-700' : 'text-slate-400' }}">{{ $fmt($item['pendentes_privado']) }} não abriram</strong>
+                        </span>
                     </a>
                 </div>
             </div>
@@ -372,6 +422,9 @@
                                 <span class="text-[11px] text-slate-600">{{ $linha['municipio'] }}</span>
                                 <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold {{ $linha['competencia'] === 'estadual' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700' }}">
                                     {{ ucfirst($linha['competencia']) }}
+                                </span>
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold {{ $linha['setor'] === 'publico' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-600' }}">
+                                    {{ $linha['setor'] === 'publico' ? 'Público' : 'Privado' }}
                                 </span>
                                 @if($e->status !== 'aprovado')
                                     <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-yellow-50 text-yellow-800">Cadastro {{ $e->status }}</span>
