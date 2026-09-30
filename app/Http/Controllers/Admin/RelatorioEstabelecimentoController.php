@@ -46,6 +46,7 @@ class RelatorioEstabelecimentoController extends Controller
 
         $indicadores = $this->indicadores($linhas, $tiposFoco, $filtros);
         $graficos = $this->graficos($linhas, $tiposFoco, $filtros, $usuario);
+        $tempos = $filtros['tipo'] ? $this->temposMedios($linhasFiltradas, $filtros['tipo']) : null;
 
         $estabelecimentos = $this->paginar($linhasFiltradas, 20, $request);
 
@@ -62,8 +63,23 @@ class RelatorioEstabelecimentoController extends Controller
 
         return view('admin.relatorios.estabelecimentos', compact(
             'estabelecimentos', 'indicadores', 'graficos', 'filtros', 'tipos',
-            'municipios', 'anos', 'escopoVisual'
+            'municipios', 'anos', 'escopoVisual', 'tempos'
         ) + ['totalFiltrado' => $linhasFiltradas->count()]);
+    }
+
+    /**
+     * Tempo médio de cada etapa e de cada setor, para os processos do tipo escolhido (do ano, se anual).
+     */
+    private function temposMedios(Collection $linhas, string $tipo): array
+    {
+        $comProcesso = $linhas->filter(fn ($l) => isset($l['demandas'][$tipo]['processo']));
+        $processos = $comProcesso->map(fn ($l) => $l['demandas'][$tipo]['processo'])->values();
+        $docCompleta = $comProcesso
+            ->filter(fn ($l) => in_array($l['etapa'] ?? null, ['doc_completa', 'com_alvara'], true))
+            ->mapWithKeys(fn ($l) => [$l['demandas'][$tipo]['processo']->id => true])
+            ->all();
+
+        return app(\App\Services\ProcessoLinhaTempoService::class)->resumo($processos, $docCompleta);
     }
 
     public function export(Request $request): StreamedResponse

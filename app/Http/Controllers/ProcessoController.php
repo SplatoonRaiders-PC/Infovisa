@@ -4746,6 +4746,74 @@ TXT;
     /**
      * Marca que o responsável está ciente da atribuição
      */
+    /**
+     * Linha do tempo do processo: tempo de cada etapa (abertura, envio da empresa, documentação
+     * completa, alvará) e tempo em cada setor. Usado pelo modal "Tempo por etapa" da tela do processo.
+     */
+    public function linhaTempo($estabelecimentoId, $processoId, \App\Services\ProcessoLinhaTempoService $servico)
+    {
+        $estabelecimento = Estabelecimento::findOrFail($estabelecimentoId);
+        $this->validarPermissaoAcesso($estabelecimento);
+
+        $processo = Processo::with(['estabelecimento', 'tipoProcesso', 'responsavelAtual', 'documentos', 'pastas', 'unidades'])
+            ->where('estabelecimento_id', $estabelecimentoId)
+            ->findOrFail($processoId);
+
+        $dados = $servico->calcular($processo);
+        $fmt = fn ($s) => \App\Services\ProcessoLinhaTempoService::formatarDuracao($s);
+        $pct = fn ($s, $total) => $total > 0 ? round($s * 100 / $total, 1) : 0;
+
+        $marcos = [];
+        $anterior = null;
+        foreach ($dados['marcos'] as $marco) {
+            $marcos[] = [
+                'chave' => $marco['chave'],
+                'icone' => $marco['icone'],
+                'titulo' => $marco['titulo'],
+                'data' => $marco['data']->format('d/m/Y H:i'),
+                'depois' => $anterior ? '+' . $fmt($marco['data']->getTimestamp() - $anterior->getTimestamp()) : null,
+            ];
+            $anterior = $marco['data'];
+        }
+
+        $totalEtapas = collect($dados['etapas'])->sum('segundos');
+        $totalTrajeto = collect($dados['trajeto'])->sum('segundos');
+        $totalSetores = collect($dados['setores'])->sum('segundos');
+
+        return response()->json([
+            'numero' => $processo->numero_processo,
+            'em_andamento' => $dados['em_andamento'],
+            'total' => $fmt($dados['segundos_total']),
+            'parado' => $dados['segundos_parado'] > 0 ? $fmt($dados['segundos_parado']) : null,
+            'marcos' => $marcos,
+            'faltando' => collect($dados['faltando'])->map(fn ($c) => \App\Services\ProcessoLinhaTempoService::MARCOS[$c]['curto'])->values(),
+            'etapas' => collect($dados['etapas'])->map(fn ($e) => [
+                'de' => $e['de'],
+                'titulo' => $e['titulo'],
+                'duracao' => $fmt($e['segundos']),
+                'percentual' => $pct($e['segundos'], $totalEtapas),
+                'periodo' => $e['inicio']->format('d/m/Y') . ' – ' . ($e['em_andamento'] ? 'hoje' : $e['fim']->format('d/m/Y')),
+                'em_andamento' => $e['em_andamento'],
+            ])->values(),
+            'trajeto' => collect($dados['trajeto'])->map(fn ($t) => [
+                'nome' => $t['nome'],
+                'duracao' => $fmt($t['segundos']),
+                'percentual' => $pct($t['segundos'], $totalTrajeto),
+                'periodo' => $t['inicio']->format('d/m/Y') . ' – ' . ($t['atual'] ? 'hoje' : $t['fim']->format('d/m/Y')),
+                'responsaveis' => $t['responsaveis'],
+                'atual' => $t['atual'],
+                'arquivado' => $t['arquivado'],
+            ])->values(),
+            'setores' => collect($dados['setores'])->map(fn ($s) => [
+                'nome' => $s['nome'],
+                'duracao' => $fmt($s['segundos']),
+                'percentual' => $pct($s['segundos'], $totalSetores),
+                'passagens' => $s['passagens'],
+                'atual' => $s['atual'],
+            ])->values(),
+        ]);
+    }
+
     public function marcarCiente(Request $request, $estabelecimentoId, $processoId)
     {
         $processo = Processo::where('estabelecimento_id', $estabelecimentoId)

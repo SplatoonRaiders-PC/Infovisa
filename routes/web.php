@@ -448,6 +448,7 @@ Route::middleware(['auth:interno', 'no-cache-auth'])->prefix('admin')->name('adm
     Route::post('/estabelecimentos/{id}/processos/{processo}/designar', [\App\Http\Controllers\ProcessoController::class, 'designarResponsavel'])->name('estabelecimentos.processos.designar');
     Route::post('/estabelecimentos/{id}/processos/{processo}/atribuir', [\App\Http\Controllers\ProcessoController::class, 'atribuirProcesso'])->name('estabelecimentos.processos.atribuir');
     Route::post('/estabelecimentos/{id}/processos/{processo}/ciente', [\App\Http\Controllers\ProcessoController::class, 'marcarCiente'])->name('estabelecimentos.processos.ciente');
+    Route::get('/estabelecimentos/{id}/processos/{processo}/linha-tempo', [\App\Http\Controllers\ProcessoController::class, 'linhaTempo'])->name('estabelecimentos.processos.linha-tempo');
     Route::patch('/estabelecimentos/{id}/processos/{processo}/designacoes/{designacao}', [\App\Http\Controllers\ProcessoController::class, 'atualizarDesignacao'])->name('estabelecimentos.processos.designacoes.atualizar');
     Route::put('/estabelecimentos/{id}/processos/{processo}/designacoes/{designacao}/concluir', [\App\Http\Controllers\ProcessoController::class, 'concluirDesignacao'])->name('estabelecimentos.processos.designacoes.concluir');
     
