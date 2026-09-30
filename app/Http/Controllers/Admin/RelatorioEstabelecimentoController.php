@@ -34,6 +34,9 @@ class RelatorioEstabelecimentoController extends Controller
 
     private const STATUS_INATIVOS = ['arquivado', 'concluido', 'aprovado', 'indeferido'];
 
+    /** Cadastros do escopo sem nenhuma atividade marcada (calculado em montarLinhas). */
+    private int $totalSemAtividade = 0;
+
     public function index(Request $request)
     {
         $usuario = auth('interno')->user();
@@ -63,7 +66,7 @@ class RelatorioEstabelecimentoController extends Controller
         return view('admin.relatorios.estabelecimentos', compact(
             'estabelecimentos', 'indicadores', 'graficos', 'filtros', 'tipos',
             'municipios', 'anos', 'escopoVisual'
-        ) + ['totalFiltrado' => $linhasFiltradas->count()]);
+        ) + ['totalFiltrado' => $linhasFiltradas->count(), 'totalSemAtividade' => $this->totalSemAtividade]);
     }
 
     public function export(Request $request): StreamedResponse
@@ -132,7 +135,7 @@ class RelatorioEstabelecimentoController extends Controller
                 ? $request->input('competencia') : null,
             'municipio_id' => $podeFiltrarMunicipio && $request->filled('municipio_id') ? $request->integer('municipio_id') : null,
             'tipo' => in_array($request->input('tipo'), self::TIPOS_CONTROLADOS, true) ? $request->input('tipo') : null,
-            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'com_alvara', 'doc_completa', 'doc_incompleta', 'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer'], true)
+            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'sem_atividade', 'com_alvara', 'doc_completa', 'doc_incompleta', 'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer'], true)
                 ? $request->input('situacao') : null,
             'status_estabelecimento' => $request->input('status_estabelecimento', 'aprovado') === 'todos' ? 'todos' : 'aprovado',
             'setor' => in_array($request->input('setor'), ['publico', 'privado'], true) ? $request->input('setor') : null,
@@ -174,6 +177,9 @@ class RelatorioEstabelecimentoController extends Controller
         // Cadastros rejeitados nunca entram no relatório (nem em "Todos os cadastros")
         $query->where(fn ($q) => $q->whereNull('status')->orWhere('status', '!=', 'rejeitado'));
 
+        // Cadastros da própria vigilância usados no processo de Descentralização não são estabelecimentos fiscalizados
+        $query->whereDoesntHave('processos', fn ($q) => $q->where('tipo', 'descentralizacao'));
+
         if ($filtros['status_estabelecimento'] === 'aprovado') {
             $query->where('status', 'aprovado')->where('ativo', true);
         }
@@ -203,7 +209,13 @@ class RelatorioEstabelecimentoController extends Controller
         $linhas = $query->orderByRaw('COALESCE(nome_fantasia, razao_social) asc')->get()
             ->map(fn (Estabelecimento $e) => $this->montarLinha($e, $tipos, $filtros))
             ->filter(fn ($linha) => $this->dentroDoEscopo($linha, $usuario, $filtros['competencia']))
-            // Com tipo escolhido, só entram estabelecimentos que exigem esse processo
+            ->values();
+
+        // Antes do filtro por tipo: cadastros sem nenhuma atividade marcada (ficam fora do cálculo)
+        $this->totalSemAtividade = $linhas->where('sem_atividade', true)->count();
+
+        // Com tipo escolhido, só entram estabelecimentos que exigem esse processo
+        $linhas = $linhas
             ->when($filtros['tipo'], fn ($c) => $c->filter(fn ($linha) => isset($linha['demandas'][$filtros['tipo']])))
             ->values();
 
@@ -351,7 +363,9 @@ class RelatorioEstabelecimentoController extends Controller
     private function montarLinha(Estabelecimento $e, Collection $tipos, array $filtros): array
     {
         $competencia = $e->isCompetenciaEstadual() ? 'estadual' : 'municipal';
-        $atividades = $e->getTodasAtividades();
+        // Só as atividades MARCADAS no cadastro. getTodasAtividades() usa o CNAE da Receita quando
+        // nada está marcado, o que faria cadastros sem atividade "exigirem" licenciamento.
+        $atividades = $this->atividadesMarcadas($e);
         $possuiCnaeComum = collect($atividades)->contains(fn ($c) => !array_key_exists($c, self::ATIVIDADES_ESPECIAIS));
 
         $exigidos = [];
@@ -393,7 +407,10 @@ class RelatorioEstabelecimentoController extends Controller
         $processosAtivos = $processosConsiderados->reject(fn ($p) => in_array($p->status, self::STATUS_INATIVOS, true))->values();
         $pendente = collect($demandas)->contains(fn ($d) => !$d['atendida']);
 
-        if (empty($demandas)) {
+        if (empty($atividades)) {
+            $situacao = 'sem_exigencia';
+            $situacaoLabel = 'Sem atividade marcada';
+        } elseif (empty($demandas)) {
             $situacao = 'sem_exigencia';
             $situacaoLabel = 'Sem exigência';
         } elseif ($pendente) {
@@ -420,7 +437,25 @@ class RelatorioEstabelecimentoController extends Controller
             'ultimo_processo' => $processosConsiderados->first()?->created_at,
             'situacao' => $situacao,
             'situacao_label' => $situacaoLabel,
+            'sem_atividade' => empty($atividades),
         ];
+    }
+
+    /**
+     * Códigos das atividades marcadas pelo estabelecimento (CNAE só dígitos, PROJ_ARQ, ANAL_ROT), sem fallback.
+     */
+    private function atividadesMarcadas(Estabelecimento $e): array
+    {
+        return collect($e->atividades_exercidas ?? [])
+            ->map(fn ($a) => is_array($a) ? ($a['codigo'] ?? null) : (is_string($a) ? $a : null))
+            ->filter()
+            ->map(fn ($codigo) => array_key_exists(strtoupper($codigo), self::ATIVIDADES_ESPECIAIS)
+                ? strtoupper($codigo)
+                : preg_replace('/\D/', '', $codigo))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function dentroDoEscopo(array $linha, UsuarioInterno $usuario, ?string $competenciaFiltro): bool
@@ -455,6 +490,7 @@ class RelatorioEstabelecimentoController extends Controller
                         'com_ativo' => $l['processos_ativos']->isNotEmpty(),
                         'sem_ativo' => $l['processos_ativos']->isEmpty(),
                         'sem_exigencia' => $l['situacao'] === 'sem_exigencia',
+                        'sem_atividade' => $l['sem_atividade'],
                         'com_alvara', 'doc_completa', 'doc_incompleta' => ($l['etapa'] ?? null) === $filtros['situacao'],
                         'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer' => ($l['sub_etapa'] ?? null) === $filtros['situacao'],
                         default => true,

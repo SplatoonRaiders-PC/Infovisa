@@ -191,10 +191,10 @@
                     </p>
                     <ul class="mt-1 text-xs space-y-0.5 list-disc list-inside">
                         @foreach($alertaCnae->cnaes_removidos ?? [] as $cnae)
-                            <li><strong>Saiu do CNPJ:</strong> {{ \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae($cnae['codigo'] ?? '') }} — {{ $cnae['descricao'] ?? '' }} ({{ ucfirst($cnae['competencia'] ?? '') }}). Desmarque se não é mais exercida.</li>
+                            <li><strong>Saiu do CNPJ:</strong> {{ \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae($cnae['codigo'] ?? '') }} — {{ $cnae['descricao'] ?? '' }} ({{ ($cnae['competencia'] ?? '') === 'nao_sujeito_visa' ? 'não é da VISA' : ucfirst($cnae['competencia'] ?? '') }}). Desmarque se não é mais exercida.</li>
                         @endforeach
                         @foreach($alertaCnae->cnaes_novos ?? [] as $cnae)
-                            <li><strong>Novo no CNPJ:</strong> {{ \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae($cnae['codigo'] ?? '') }} — {{ $cnae['descricao'] ?? '' }} ({{ ucfirst($cnae['competencia'] ?? '') }}). Marque se o estabelecimento exerce.</li>
+                            <li><strong>Novo no CNPJ:</strong> {{ \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae($cnae['codigo'] ?? '') }} — {{ $cnae['descricao'] ?? '' }} ({{ ($cnae['competencia'] ?? '') === 'nao_sujeito_visa' ? 'não é da VISA' : ucfirst($cnae['competencia'] ?? '') }}). Marque se o estabelecimento exerce.</li>
                         @endforeach
                     </ul>
                     <p class="text-xs mt-1.5 opacity-80">Ao salvar as atividades, este alerta é encerrado.</p>
@@ -258,9 +258,9 @@
                                     {{-- Competência da atividade pela pactuação (informativo) --}}
                                     <template x-if="atividade.competencia">
                                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ring-1"
-                                              :class="atividade.competencia === 'estadual' ? 'bg-purple-50 text-purple-700 ring-purple-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'"
-                                              :title="atividade.sem_resposta ? 'Depende da resposta ao questionário (ainda sem resposta)' : ('Pactuação' + (atividade.tabela ? ' — Tabela ' + atividade.tabela : ''))">
-                                            <span x-text="atividade.competencia === 'estadual' ? '🏛️ Estadual' : '🏠 Municipal'"></span>
+                                              :class="atividade.competencia === 'estadual' ? 'bg-purple-50 text-purple-700 ring-purple-200' : (atividade.competencia === 'nao_sujeito_visa' ? 'bg-gray-100 text-gray-600 ring-gray-300' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')"
+                                              :title="atividade.competencia === 'nao_sujeito_visa' ? 'Não consta na pactuação (ou resposta NÃO na Tabela V): não é atividade da Vigilância Sanitária' : (atividade.sem_resposta ? 'Depende da resposta ao questionário (ainda sem resposta)' : ('Pactuação' + (atividade.tabela ? ' — Tabela ' + atividade.tabela : '')))">
+                                            <span x-text="atividade.competencia === 'estadual' ? '🏛️ Estadual' : (atividade.competencia === 'nao_sujeito_visa' ? '🚫 Não é da VISA' : '🏠 Municipal')"></span>
                                             <span x-show="atividade.descentralizado" class="font-normal opacity-80">(descentralizado)</span>
                                             <span x-show="atividade.excecao_hospitalar" class="font-normal opacity-80">(exceção hospitalar)</span>
                                             <span x-show="atividade.sem_resposta" class="font-normal opacity-80">(sem resposta ao questionário)</span>

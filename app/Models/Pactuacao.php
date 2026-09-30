@@ -603,13 +603,16 @@ class Pactuacao extends Model
         $pactuacao = self::ativaPorCnae($cnaeCodigo);
         
         if (!$pactuacao) {
-            // Se não encontrou, assume municipal com risco baixo
+            // Fora da pactuação = atividade que não é de competência da Vigilância Sanitária
+            // (mesmo efeito de responder "NÃO" na Tabela V). Não torna o estabelecimento estadual.
             return [
-                'competencia' => 'municipal',
+                'competencia' => 'nao_sujeito_visa',
                 'risco' => 'baixo',
                 'detalhes' => [
                     'encontrado' => false,
-                    'mensagem' => 'Atividade não encontrada na pactuação - assumindo competência municipal'
+                    'nao_pactuada' => true,
+                    'sujeito_visa' => false,
+                    'mensagem' => 'Atividade não consta na pactuação - não é de competência da Vigilância Sanitária'
                 ]
             ];
         }

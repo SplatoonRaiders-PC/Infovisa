@@ -286,6 +286,42 @@ class EstabelecimentoController extends Controller
         ];
     }
 
+    /**
+     * Atividades (CNAE) que não são sujeitas à Vigilância Sanitária pela pactuação:
+     * não constam na pactuação ou foram respondidas "NÃO" na Tabela V. Retorna "código - descrição".
+     */
+    private function atividadesNaoSujeitasVisa(array $atividades, ?string $cidade, array $respostas1, array $respostas2): array
+    {
+        $municipio = $cidade ? trim(preg_replace('/\s*[-\/]\s*TO\s*$/i', '', $cidade)) : null;
+        $naoSujeitas = [];
+
+        foreach ($atividades as $atividade) {
+            $codigoOriginal = is_array($atividade) ? ($atividade['codigo'] ?? null) : $atividade;
+            if (!$codigoOriginal || in_array($codigoOriginal, ['PROJ_ARQ', 'ANAL_ROT'], true)) {
+                continue;
+            }
+
+            $codigo = preg_replace('/\D/', '', (string) $codigoOriginal);
+            if ($codigo === '') {
+                continue;
+            }
+
+            $resultado = \App\Models\Pactuacao::verificarCompetenciaAvancada(
+                $codigo,
+                $municipio,
+                $respostas1[$codigo] ?? $respostas1[$codigoOriginal] ?? null,
+                $respostas2[$codigo] ?? $respostas2[$codigoOriginal] ?? null
+            );
+
+            if (($resultado['competencia'] ?? null) === 'nao_sujeito_visa') {
+                $descricao = is_array($atividade) ? ($atividade['descricao'] ?? $atividade['nome'] ?? '') : '';
+                $naoSujeitas[] = trim($codigo . ($descricao ? ' - ' . $descricao : ''));
+            }
+        }
+
+        return $naoSujeitas;
+    }
+
     public function store(Request $request)
     {
         Log::info('Dados recebidos no store:', $request->all());
@@ -451,6 +487,29 @@ class EstabelecimentoController extends Controller
         }
         if ($request->filled('respostas_questionario2')) {
             $validated['respostas_questionario2'] = json_decode($request->respostas_questionario2, true);
+        }
+
+        // Atividades que não são da Vigilância Sanitária (fora da pactuação ou "NÃO" na Tabela V)
+        // não podem ser cadastradas — vale para público e privado.
+        if (!$isUnidadeMovel) {
+            $naoSujeitas = $this->atividadesNaoSujeitasVisa(
+                $validated['atividades_exercidas'] ?? [],
+                $request->input('cidade'),
+                $validated['respostas_questionario'] ?? [],
+                $validated['respostas_questionario2'] ?? []
+            );
+
+            if (!empty($naoSujeitas)) {
+                $totalAtividades = collect($validated['atividades_exercidas'] ?? [])
+                    ->reject(fn ($a) => in_array(is_array($a) ? ($a['codigo'] ?? null) : $a, ['PROJ_ARQ', 'ANAL_ROT'], true))
+                    ->count();
+
+                return back()->withErrors([
+                    'atividades_exercidas' => count($naoSujeitas) >= $totalAtividades
+                        ? 'As atividades selecionadas não são de competência da Vigilância Sanitária. Este estabelecimento não precisa de cadastro/licença sanitária.'
+                        : 'Estas atividades não são de competência da Vigilância Sanitária e devem ser desmarcadas: ' . implode('; ', $naoSujeitas) . '.',
+                ])->withInput();
+            }
         }
 
         // PJ Unidade Móvel: decodifica respostas P1/P2 e a tabela de municípios de atuação (P4)

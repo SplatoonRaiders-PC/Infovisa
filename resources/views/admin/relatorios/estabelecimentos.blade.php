@@ -47,6 +47,9 @@
             'com_ativo' => ['label' => 'Com processo ativo', 'total' => $indicadores['com_ativo']],
             'sem_ativo' => ['label' => 'Sem processo ativo', 'total' => $indicadores['sem_ativo']],
         ];
+        if ($totalSemAtividade > 0) {
+            $situacoes['sem_atividade'] = ['label' => 'Sem atividade marcada', 'total' => $totalSemAtividade];
+        }
     }
     $etapaClasse = [
         'nao_abriu' => 'bg-red-50 text-red-700 ring-red-200',
@@ -359,6 +362,23 @@
             </div>
         @endforeach
     </div>
+
+    {{-- Cadastros sem atividade marcada: não entram no cálculo, mas ficam visíveis para correção --}}
+    @if($totalSemAtividade > 0 && $filtros['situacao'] !== 'sem_atividade')
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 rounded-2xl bg-amber-50 border border-amber-200">
+            <span class="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center flex-shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </span>
+            <p class="text-sm text-amber-900 flex-1">
+                <strong>{{ $fmt($totalSemAtividade) }} {{ $totalSemAtividade === 1 ? 'cadastro não tem' : 'cadastros não têm' }} nenhuma atividade marcada</strong>
+                e por isso não {{ $totalSemAtividade === 1 ? 'entra' : 'entram' }} nas contas de processos exigidos. Marque as atividades para que {{ $totalSemAtividade === 1 ? 'ele seja contado' : 'sejam contados' }}.
+            </p>
+            <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(['situacao' => 'sem_atividade'] + request()->except(['page', 'situacao', 'tipo']))) }}"
+               class="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold text-amber-800 bg-white ring-1 ring-amber-300 rounded-lg hover:bg-amber-100 whitespace-nowrap">
+                Ver quais são
+            </a>
+        </div>
+    @endif
 
     {{-- Gráficos --}}
     @php

@@ -640,9 +640,11 @@
                                        @change="buscarQuestionarios()"
                                        class="mt-1 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
                                 <div class="flex-1">
-                                    <div class="flex items-center gap-2 mb-1">
+                                    <div class="flex flex-wrap items-center gap-2 mb-1">
                                         <span class="px-2 py-0.5 bg-blue-600 text-white text-xs font-bold rounded">Principal</span>
                                         <span class="font-mono text-sm text-gray-900" x-text="dados.cnae_fiscal"></span>
+                                        <span x-show="atividadePrincipalMarcada && naoEhVisa(dados.cnae_fiscal)" x-cloak
+                                              class="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-semibold rounded">🚫 Não é atividade da Vigilância Sanitária</span>
                                     </div>
                                     <span class="text-sm text-gray-700" x-text="dados.cnae_fiscal_descricao"></span>
                                 </div>
@@ -657,9 +659,11 @@
                                            @change="buscarQuestionarios()"
                                            class="mt-1 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
                                     <div class="flex-1">
-                                        <div class="flex items-center gap-2">
+                                        <div class="flex flex-wrap items-center gap-2">
                                             <span class="font-mono text-sm text-gray-900" x-text="cnae.codigo"></span>
                                             <span x-show="cnae.manual" class="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded">Manual</span>
+                                            <span x-show="atividadesExercidas.includes(String(cnae.codigo)) && naoEhVisa(cnae.codigo)" x-cloak
+                                                  class="px-1.5 py-0.5 bg-red-100 text-red-700 text-xs font-semibold rounded">🚫 Não é atividade da Vigilância Sanitária</span>
                                         </div>
                                         <span class="text-sm text-gray-600" x-text="' - ' + (cnae.descricao || cnae.texto || '')"></span>
                                     </div>
@@ -853,6 +857,20 @@
 
                     {{-- Indicador de Competência --}}
                     <div x-show="atividadesExercidas.length > 0 || atividadePrincipalMarcada" class="mt-4">
+                        {{-- Algumas (não todas) atividades marcadas não são da VISA: precisam ser desmarcadas --}}
+                        <div x-show="!naoSujeitoVisa && atividadesNaoVisaSelecionadas().length > 0" x-cloak class="mb-4 bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+                            <h4 class="text-sm font-bold text-red-900">🚫 Desmarque as atividades que não são da Vigilância Sanitária</h4>
+                            <p class="text-sm text-red-800 mt-1">
+                                Estas atividades não são de competência da Vigilância Sanitária (não constam na pactuação ou, pela resposta do questionário, não estão sujeitas à fiscalização).
+                                Elas não podem constar no cadastro nem no Alvará Sanitário:
+                            </p>
+                            <ul class="mt-2 space-y-1">
+                                <template x-for="item in atividadesNaoVisaSelecionadas()" :key="item.codigo">
+                                    <li class="text-sm text-red-900"><span class="font-mono font-semibold" x-text="item.codigo"></span> <span x-text="item.descricao ? '— ' + item.descricao : ''"></span></li>
+                                </template>
+                            </ul>
+                        </div>
+
                         {{-- Alerta NÃO SUJEITO À VISA --}}
                         <div x-show="naoSujeitoVisa" class="bg-gray-50 border-l-4 border-gray-500 p-4 rounded-lg">
                             <div class="flex items-start">
@@ -866,7 +884,8 @@
                                 <div class="ml-4 flex-1">
                                     <h4 class="text-lg font-bold text-gray-900">🚫 NÃO SUJEITO À VIGILÂNCIA SANITÁRIA</h4>
                                     <p class="text-sm text-gray-700 mt-1">
-                                        Com base nas respostas do questionário, as atividades selecionadas <strong>NÃO estão sujeitas à fiscalização da Vigilância Sanitária</strong>.
+                                        As atividades selecionadas <strong>NÃO são de competência da Vigilância Sanitária</strong>
+                                        (não constam na pactuação ou, pela resposta do questionário, não estão sujeitas à fiscalização).
                                     </p>
                                     <p class="text-sm text-gray-600 mt-2">
                                         Este estabelecimento <strong>não precisa de licença sanitária</strong> para exercer estas atividades.
@@ -958,7 +977,8 @@
                             </template>
                             <span x-show="naoSujeitoVisa">Cadastro não necessário</span>
                             <span x-show="!naoSujeitoVisa && carregandoQuestionarios">Aguarde...</span>
-                            <span x-show="!naoSujeitoVisa && !carregandoQuestionarios && !podeAvancarAtividades()">Selecione atividades</span>
+                            <span x-show="!naoSujeitoVisa && !carregandoQuestionarios && atividadesNaoVisaSelecionadas().length > 0">Desmarque as atividades fora da VISA</span>
+                            <span x-show="!naoSujeitoVisa && !carregandoQuestionarios && !podeAvancarAtividades() && atividadesNaoVisaSelecionadas().length === 0">Selecione atividades</span>
                             <span x-show="!naoSujeitoVisa && !carregandoQuestionarios && podeAvancarAtividades()">Próximo: Contato →</span>
                         </button>
                     </div>
@@ -1147,6 +1167,8 @@ function estabelecimentoFormCompany() {
         respostasQuestionario2: {},
         competenciaEstadual: false,
         naoSujeitoVisa: false,
+        // Competência de cada atividade marcada (CNAE só dígitos => estadual|municipal|nao_sujeito_visa)
+        competenciaPorCnae: {},
         // Atividades Especiais (Projeto Arquitetônico / Análise de Rotulagem)
         apenasAtividadesEspeciais: false,
         atividadeEspecialProjetoArq: false,
@@ -1333,7 +1355,10 @@ function estabelecimentoFormCompany() {
                 
                 this.competenciaEstadual = result.competencia === 'estadual';
                 this.naoSujeitoVisa = result.competencia === 'nao_sujeito_visa';
-                
+                this.competenciaPorCnae = Object.fromEntries(
+                    (result.detalhes || []).map(d => [String(d.cnae).replace(/\D/g, ''), d.competencia])
+                );
+
                 console.log('📊 Competência definida:', {
                     competenciaEstadual: this.competenciaEstadual,
                     naoSujeitoVisa: this.naoSujeitoVisa,
@@ -1761,6 +1786,25 @@ function estabelecimentoFormCompany() {
             }
         },
 
+        // Atividade fora da pactuação ou respondida "NÃO" na Tabela V
+        naoEhVisa(codigo) {
+            return this.competenciaPorCnae[String(codigo || '').replace(/\D/g, '')] === 'nao_sujeito_visa';
+        },
+
+        // Atividades marcadas que não são da Vigilância Sanitária
+        atividadesNaoVisaSelecionadas() {
+            const lista = [];
+            if (this.atividadePrincipalMarcada && this.naoEhVisa(this.dados.cnae_fiscal)) {
+                lista.push({ codigo: this.dados.cnae_fiscal, descricao: this.dados.cnae_fiscal_descricao });
+            }
+            (this.dados.cnaes_secundarios || []).forEach(cnae => {
+                if (this.atividadesExercidas.includes(String(cnae.codigo)) && this.naoEhVisa(cnae.codigo)) {
+                    lista.push({ codigo: cnae.codigo, descricao: cnae.descricao || cnae.texto || '' });
+                }
+            });
+            return lista;
+        },
+
         // Verifica se pode avançar da aba de atividades
         podeAvancarAtividades() {
             // Se está no modo de atividades especiais
@@ -1789,7 +1833,10 @@ function estabelecimentoFormCompany() {
                     }
                 }
             }
-            
+
+            // Atividades que não são da Vigilância Sanitária precisam ser desmarcadas
+            if (this.atividadesNaoVisaSelecionadas().length > 0) return false;
+
             return true;
         },
 
