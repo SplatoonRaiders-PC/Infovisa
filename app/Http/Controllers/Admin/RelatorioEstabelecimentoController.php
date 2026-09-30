@@ -46,7 +46,6 @@ class RelatorioEstabelecimentoController extends Controller
 
         $indicadores = $this->indicadores($linhas, $tiposFoco, $filtros);
         $graficos = $this->graficos($linhas, $tiposFoco, $filtros, $usuario);
-        $tempos = $filtros['tipo'] ? $this->temposMedios($linhasFiltradas, $filtros['tipo']) : null;
 
         $estabelecimentos = $this->paginar($linhasFiltradas, 20, $request);
 
@@ -63,23 +62,8 @@ class RelatorioEstabelecimentoController extends Controller
 
         return view('admin.relatorios.estabelecimentos', compact(
             'estabelecimentos', 'indicadores', 'graficos', 'filtros', 'tipos',
-            'municipios', 'anos', 'escopoVisual', 'tempos'
+            'municipios', 'anos', 'escopoVisual'
         ) + ['totalFiltrado' => $linhasFiltradas->count()]);
-    }
-
-    /**
-     * Tempo médio de cada etapa e de cada setor, para os processos do tipo escolhido (do ano, se anual).
-     */
-    private function temposMedios(Collection $linhas, string $tipo): array
-    {
-        $comProcesso = $linhas->filter(fn ($l) => isset($l['demandas'][$tipo]['processo']));
-        $processos = $comProcesso->map(fn ($l) => $l['demandas'][$tipo]['processo'])->values();
-        $docCompleta = $comProcesso
-            ->filter(fn ($l) => in_array($l['etapa'] ?? null, ['doc_completa', 'com_alvara'], true))
-            ->mapWithKeys(fn ($l) => [$l['demandas'][$tipo]['processo']->id => true])
-            ->all();
-
-        return app(\App\Services\ProcessoLinhaTempoService::class)->resumo($processos, $docCompleta);
     }
 
     public function export(Request $request): StreamedResponse
@@ -239,16 +223,10 @@ class RelatorioEstabelecimentoController extends Controller
             $linhas->map(fn ($l) => $l['demandas'][$tipo]['processo'] ?? null)->filter()->values()->all()
         );
 
-        $comAlvara = collect();
-        if ($tipo === 'licenciamento' && $processos->isNotEmpty()) {
-            $comAlvara = \App\Models\DocumentoDigital::query()
-                ->whereIn('processo_id', $processos->pluck('id'))
-                ->where('status', 'assinado')
-                ->whereHas('tipoDocumento', fn ($q) => $q->where('codigo', 'alvara_sanitario'))
-                ->pluck('processo_id')
-                ->unique()
-                ->flip();
-        }
+        // processo_id => ['definitivo' => ?Carbon, 'provisorio' => ?Carbon] (uma consulta só)
+        $comAlvara = $tipo === 'licenciamento'
+            ? app(\App\Services\ProcessoLinhaTempoService::class)->alvarasPorProcesso($processos->pluck('id'))
+            : collect();
 
         // Checklist de documentos obrigatórios só para quem ainda não tem alvará (mesma regra da tela de Processos)
         $semAlvara = $processos->reject(fn ($p) => $comAlvara->has($p->id))->values();
@@ -263,6 +241,10 @@ class RelatorioEstabelecimentoController extends Controller
                 $etapa = 'nao_abriu';
             } elseif ($comAlvara->has($processo->id)) {
                 $etapa = 'com_alvara';
+                // Tempo só para o alvará definitivo (provisório não conclui o licenciamento)
+                $definitivo = $comAlvara[$processo->id]['definitivo'];
+                $linha['alvara_definitivo'] = (bool) $definitivo;
+                $linha['dias_ate_alvara'] = $definitivo ? (int) $processo->created_at->diffInDays($definitivo) : null;
             } else {
                 $processo->setRelation('estabelecimento', $linha['estabelecimento']);
                 $obrigatorios = $processo->getDocumentosObrigatoriosChecklist()->where('obrigatorio', true);
@@ -526,6 +508,10 @@ class RelatorioEstabelecimentoController extends Controller
             'por_tipo' => $porTipo,
             // Etapas (só quando há um tipo de processo escolhido)
             'com_alvara' => $linhas->where('etapa', 'com_alvara')->count(),
+            'alvara_definitivo' => $linhas->where('alvara_definitivo', true)->count(),
+            'alvara_nao_definitivo' => $linhas->where('etapa', 'com_alvara')->where('alvara_definitivo', false)->count(),
+            'media_dias_alvara' => ($dias = $linhas->pluck('dias_ate_alvara')->filter(fn ($d) => $d !== null))->isNotEmpty()
+                ? (int) round($dias->avg()) : null,
             'doc_completa' => $linhas->where('etapa', 'doc_completa')->count(),
             'doc_incompleta' => $linhas->where('etapa', 'doc_incompleta')->count(),
             // Licenciamento com doc. completa: situação do parecer

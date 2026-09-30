@@ -171,81 +171,178 @@
 
     @php
         $pct = fn ($parte, $todo) => $todo > 0 ? (int) round($parte * 100 / $todo) : 0;
-        $corCobertura = fn ($v) => $v === null ? 'text-slate-400' : ($v >= 80 ? 'text-emerald-600' : ($v >= 50 ? 'text-amber-600' : 'text-red-600'));
-        $barraCobertura = fn ($v) => ($v ?? 0) >= 80 ? 'bg-emerald-500' : (($v ?? 0) >= 50 ? 'bg-amber-500' : 'bg-red-500');
+        $tomCobertura = fn ($v) => $v === null ? 'slate' : ($v >= 80 ? 'emerald' : ($v >= 50 ? 'amber' : 'red'));
+        $tons = [
+            'slate' => ['num' => 'text-slate-400', 'barra' => 'bg-slate-300', 'chip' => 'bg-slate-100 text-slate-500'],
+            'emerald' => ['num' => 'text-emerald-600', 'barra' => 'bg-emerald-500', 'chip' => 'bg-emerald-50 text-emerald-700'],
+            'amber' => ['num' => 'text-amber-600', 'barra' => 'bg-amber-500', 'chip' => 'bg-amber-50 text-amber-700'],
+            'red' => ['num' => 'text-red-600', 'barra' => 'bg-red-500', 'chip' => 'bg-red-50 text-red-700'],
+        ];
+        $tomGeral = $tons[$tomCobertura($indicadores['cobertura'])];
+        $icone = fn ($d, $classe) => '<span class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ' . $classe . '"><svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="' . $d . '"/></svg></span>';
     @endphp
 
-    @if(!$tipoFoco)
-    {{-- ===================== VISÃO GERAL ===================== --}}
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    {{-- Indicadores principais --}}
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {{-- Estabelecimentos --}}
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
-            <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Estabelecimentos</p>
-            <p class="text-3xl font-bold text-slate-900 tabular-nums mt-1">{{ $fmt($indicadores['total']) }}</p>
-            <p class="text-xs text-slate-500 mt-1">
-                {{ $fmt($indicadores['publico']) }} públicos · {{ $fmt($indicadores['privado']) }} privados
-            </p>
-        </div>
-
-        <a href="{{ $urlPendenteSetor(null) }}" class="bg-gradient-to-br from-red-50 to-white rounded-2xl border border-red-200 shadow-sm p-4 hover:ring-2 hover:ring-red-200 transition">
-            <p class="text-[11px] font-semibold text-red-700 uppercase tracking-wide">Não abriram processo</p>
-            <p class="text-3xl font-bold text-red-600 tabular-nums mt-1">{{ $fmt($indicadores['pendentes']) }}</p>
-            <p class="text-xs text-red-700/80 mt-1">🏛️ {{ $fmt($indicadores['pendentes_publico']) }} públicos · 🏢 {{ $fmt($indicadores['pendentes_privado']) }} privados</p>
-        </a>
-
-        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
-            <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Já abriram</p>
-            <p class="text-3xl font-bold tabular-nums mt-1 {{ $corCobertura($indicadores['cobertura']) }}">{{ $indicadores['cobertura'] !== null ? $indicadores['cobertura'] . '%' : '—' }}</p>
-            <div class="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                <div class="h-full rounded-full {{ $barraCobertura($indicadores['cobertura']) }}" style="width: {{ $indicadores['cobertura'] ?? 0 }}%"></div>
+            <div class="flex items-start justify-between gap-2">
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Estabelecimentos</p>
+                {!! $icone('M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4', 'bg-slate-100 text-slate-600') !!}
             </div>
-            <p class="text-xs text-slate-500 mt-1.5">{{ $fmt($indicadores['em_dia']) }} de {{ $fmt($indicadores['em_dia'] + $indicadores['pendentes']) }} que precisam</p>
+            <p class="text-3xl font-bold text-slate-900 tabular-nums -mt-1">{{ $fmt($indicadores['total']) }}</p>
+            <div class="mt-2.5 flex h-1.5 rounded-full overflow-hidden bg-slate-100" title="Públicos x privados">
+                <div class="bg-indigo-500" style="width: {{ $pct($indicadores['publico'], $indicadores['total']) }}%"></div>
+                <div class="bg-slate-400" style="width: {{ $pct($indicadores['privado'], $indicadores['total']) }}%"></div>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-1.5">
+                <span class="text-indigo-600 font-semibold">{{ $fmt($indicadores['publico']) }}</span> públicos ·
+                <span class="text-slate-700 font-semibold">{{ $fmt($indicadores['privado']) }}</span> privados
+            </p>
         </div>
 
-        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
-            <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Processos em andamento</p>
-            <p class="text-3xl font-bold text-slate-900 tabular-nums mt-1">{{ $fmt($indicadores['processos_ativos']) }}</p>
-            <p class="text-xs mt-1 {{ $indicadores['processos_parados'] ? 'text-red-600 font-semibold' : 'text-slate-500' }}">
-                {{ $indicadores['processos_parados'] ? $fmt($indicadores['processos_parados']) . ($indicadores['processos_parados'] === 1 ? ' parado' : ' parados') : 'nenhum parado' }}
+        {{-- Segundo card: depende do processo escolhido --}}
+        @if($tipoFoco === 'licenciamento')
+        <a href="{{ $urlSituacao('com_alvara') }}" class="bg-gradient-to-br from-emerald-50 via-white to-white rounded-2xl border border-emerald-200 shadow-sm p-4 hover:ring-2 hover:ring-emerald-200 transition">
+            <div class="flex items-start justify-between gap-2">
+                <p class="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Com alvará sanitário</p>
+                {!! $icone('M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z', 'bg-emerald-100 text-emerald-600') !!}
+            </div>
+            <p class="text-3xl font-bold text-emerald-600 tabular-nums -mt-1">{{ $fmt($indicadores['com_alvara']) }}</p>
+            <p class="text-[11px] text-slate-600 mt-2">
+                <span class="font-semibold text-emerald-700">{{ $fmt($indicadores['alvara_definitivo']) }}</span> definitivos
+                @if($indicadores['alvara_nao_definitivo'])
+                    · <span class="font-semibold text-sky-700">{{ $fmt($indicadores['alvara_nao_definitivo']) }}</span> provisórios
+                @endif
             </p>
+            @if($indicadores['media_dias_alvara'] !== null)
+                <p class="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100/70 text-[11px] font-semibold text-emerald-800">
+                    ⏱ média de {{ $fmt($indicadores['media_dias_alvara']) }} {{ $indicadores['media_dias_alvara'] === 1 ? 'dia' : 'dias' }} até o definitivo
+                </p>
+            @endif
+        </a>
+        @elseif($tipoFoco)
+        <a href="{{ $urlSituacao('doc_completa') }}" class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 hover:ring-2 hover:ring-violet-200 transition">
+            <div class="flex items-start justify-between gap-2">
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Documentação completa</p>
+                {!! $icone('M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', 'bg-violet-100 text-violet-600') !!}
+            </div>
+            <p class="text-3xl font-bold text-violet-600 tabular-nums -mt-1">{{ $fmt($indicadores['doc_completa']) }}</p>
+            <p class="text-[11px] text-slate-500 mt-2">{{ $fmt($indicadores['doc_incompleta']) }} com documentação incompleta</p>
+        </a>
+        @else
+        <a href="{{ $urlSituacao('com_ativo') }}" class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 hover:ring-2 hover:ring-blue-200 transition">
+            <div class="flex items-start justify-between gap-2">
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Com processo ativo</p>
+                {!! $icone('M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', 'bg-blue-100 text-blue-600') !!}
+            </div>
+            <p class="text-3xl font-bold text-blue-600 tabular-nums -mt-1">{{ $fmt($indicadores['com_ativo']) }}</p>
+            <p class="text-[11px] text-slate-500 mt-2">{{ $fmt($indicadores['sem_ativo']) }} sem nenhum processo ativo</p>
+        </a>
+        @endif
+
+        {{-- Precisam abrir --}}
+        <div class="bg-gradient-to-br from-red-50 via-white to-white rounded-2xl border border-red-200 shadow-sm p-4 hover:ring-2 hover:ring-red-200 transition">
+            <a href="{{ $urlPendenteSetor(null) }}" class="block">
+                <div class="flex items-start justify-between gap-2">
+                    <p class="text-[11px] font-semibold text-red-700 uppercase tracking-wide">Precisam abrir processo</p>
+                    {!! $icone('M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', 'bg-red-100 text-red-600') !!}
+                </div>
+                <p class="text-3xl font-bold text-red-600 tabular-nums -mt-1">{{ $fmt($indicadores['pendentes']) }}</p>
+            </a>
+            <div class="flex flex-wrap gap-1.5 mt-2">
+                <a href="{{ $urlPendenteSetor('publico') }}"
+                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ring-1 transition {{ $filtros['situacao'] === 'pendente' && $filtros['setor'] === 'publico' ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-indigo-50 text-indigo-700 ring-indigo-200 hover:bg-indigo-100' }}">
+                    🏛️ <span class="tabular-nums">{{ $fmt($indicadores['pendentes_publico']) }}</span> públicos
+                </a>
+                <a href="{{ $urlPendenteSetor('privado') }}"
+                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ring-1 transition {{ $filtros['situacao'] === 'pendente' && $filtros['setor'] === 'privado' ? 'bg-slate-700 text-white ring-slate-700' : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50' }}">
+                    🏢 <span class="tabular-nums">{{ $fmt($indicadores['pendentes_privado']) }}</span> privados
+                </a>
+            </div>
+        </div>
+
+        {{-- Cobertura --}}
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
+            <div class="flex items-start justify-between gap-2">
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Cobertura</p>
+                {!! $icone('M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z', $tomGeral['chip']) !!}
+            </div>
+            <p class="text-3xl font-bold tabular-nums -mt-1 {{ $tomGeral['num'] }}">{{ $indicadores['cobertura'] !== null ? $indicadores['cobertura'] . '%' : '—' }}</p>
+            <div class="mt-2.5 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                <div class="h-full rounded-full {{ $tomGeral['barra'] }}" style="width: {{ $indicadores['cobertura'] ?? 0 }}%"></div>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-1.5">{{ $fmt($indicadores['em_dia']) }} de {{ $fmt($indicadores['em_dia'] + $indicadores['pendentes']) }} já abriram</p>
+        </div>
+
+        {{-- Processos ativos --}}
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
+            <div class="flex items-start justify-between gap-2">
+                <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Processos ativos</p>
+                {!! $icone('M13 10V3L4 14h7v7l9-11h-7z', 'bg-sky-100 text-sky-600') !!}
+            </div>
+            <p class="text-3xl font-bold text-slate-900 tabular-nums -mt-1">{{ $fmt($indicadores['processos_ativos']) }}</p>
+            @if($indicadores['processos_parados'])
+                <p class="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 text-[11px] font-semibold text-red-700">
+                    ⏸ {{ $fmt($indicadores['processos_parados']) }} {{ $indicadores['processos_parados'] === 1 ? 'parado' : 'parados' }}
+                </p>
+            @else
+                <p class="text-[11px] text-slate-500 mt-2">nenhum parado</p>
+            @endif
         </div>
     </div>
 
-    {{-- Por tipo de processo: o essencial em cada card --}}
+    {{-- Cobertura por tipo de processo --}}
     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
         @foreach($indicadores['por_tipo'] as $codigo => $item)
-            @php $cor = $coresTipo[$iconesTipo[$codigo]['cor'] ?? 'blue']; @endphp
-            <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 flex flex-col">
+            @php
+                $cor = $coresTipo[$iconesTipo[$codigo]['cor'] ?? 'blue'];
+                $tom = $tons[$tomCobertura($item['cobertura'])];
+                $selecionado = $tipoFoco === $codigo;
+            @endphp
+            <div class="bg-white rounded-2xl border shadow-sm p-4 flex flex-col transition {{ $selecionado ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200/80' }}">
                 <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(['tipo' => $codigo] + request()->except(['page', 'situacao', 'tipo']))) }}"
                    class="flex items-center justify-between gap-3 group">
                     <span class="flex items-center gap-2.5 min-w-0">
-                        <span class="w-9 h-9 rounded-xl {{ $cor['bg'] }} {{ $cor['text'] }} flex items-center justify-center flex-shrink-0">
+                        <span class="w-10 h-10 rounded-xl {{ $cor['bg'] }} {{ $cor['text'] }} flex items-center justify-center flex-shrink-0">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ $iconesTipo[$codigo]['icone'] ?? '' }}"/></svg>
                         </span>
-                        <span class="text-sm font-semibold text-slate-900 truncate group-hover:text-blue-700">{{ $item['nome'] }}</span>
+                        <span class="min-w-0">
+                            <span class="block text-sm font-semibold text-slate-900 truncate group-hover:text-blue-700">{{ $item['nome'] }}</span>
+                            <span class="block text-[11px] text-slate-500">{{ $item['anual'] ? 'Anual · ' . $indicadores['ano'] : 'Processo único' }}</span>
+                        </span>
                     </span>
-                    <span class="px-2 py-0.5 rounded-full text-xs font-bold tabular-nums {{ ($item['cobertura'] ?? 0) >= 80 ? 'bg-emerald-50 text-emerald-700' : (($item['cobertura'] ?? 0) >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700') }}">
-                        {{ $item['cobertura'] !== null ? $item['cobertura'] . '% abriram' : '—' }}
-                    </span>
+                    <span class="text-2xl font-bold tabular-nums {{ $tom['num'] }}">{{ $item['cobertura'] !== null ? $item['cobertura'] . '%' : '—' }}</span>
                 </a>
 
                 @if($item['exigem'] === 0)
                     <p class="mt-4 text-xs text-slate-400">Nenhum estabelecimento exige este processo.</p>
                 @else
-                    <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(['tipo' => $codigo, 'situacao' => 'pendente'] + request()->except(['page', 'situacao', 'tipo']))) }}"
-                       class="mt-4 flex items-baseline gap-1.5 group">
-                        <span class="text-3xl font-bold tabular-nums {{ $item['pendentes'] ? 'text-red-600' : 'text-emerald-600' }}">{{ $fmt($item['pendentes']) }}</span>
-                        <span class="text-sm text-slate-600 group-hover:underline">{{ $item['pendentes'] === 1 ? 'não abriu' : 'não abriram' }}</span>
-                        <span class="text-xs text-slate-400">de {{ $fmt($item['exigem']) }}</span>
-                    </a>
-
                     {{-- Barra: abriram x não abriram --}}
-                    <div class="mt-2 flex h-2 rounded-full overflow-hidden bg-slate-100" title="{{ $fmt($item['atendidos']) }} abriram · {{ $fmt($item['pendentes']) }} não abriram">
+                    <div class="mt-4 flex h-2.5 rounded-full overflow-hidden bg-slate-100" title="{{ $fmt($item['atendidos']) }} abriram · {{ $fmt($item['pendentes']) }} não abriram">
                         <div class="bg-emerald-500" style="width: {{ $pct($item['atendidos'], $item['exigem']) }}%"></div>
                         <div class="bg-red-400" style="width: {{ $pct($item['pendentes'], $item['exigem']) }}%"></div>
                     </div>
 
+                    <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+                        <div class="rounded-lg bg-slate-50 py-1.5">
+                            <p class="text-base font-bold text-slate-900 tabular-nums">{{ $fmt($item['exigem']) }}</p>
+                            <p class="text-[10px] text-slate-500 uppercase tracking-wide">precisam</p>
+                        </div>
+                        <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(['tipo' => $codigo, 'situacao' => 'em_dia'] + request()->except(['page', 'situacao', 'tipo']))) }}"
+                           class="rounded-lg bg-emerald-50 py-1.5 hover:bg-emerald-100 transition">
+                            <p class="text-base font-bold text-emerald-700 tabular-nums">{{ $fmt($item['atendidos']) }}</p>
+                            <p class="text-[10px] text-emerald-700 uppercase tracking-wide">abriram</p>
+                        </a>
+                        <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(['tipo' => $codigo, 'situacao' => 'pendente'] + request()->except(['page', 'situacao', 'tipo']))) }}"
+                           class="rounded-lg py-1.5 transition {{ $item['pendentes'] ? 'bg-red-50 hover:bg-red-100' : 'bg-slate-50' }}">
+                            <p class="text-base font-bold tabular-nums {{ $item['pendentes'] ? 'text-red-700' : 'text-slate-400' }}">{{ $fmt($item['pendentes']) }}</p>
+                            <p class="text-[10px] uppercase tracking-wide {{ $item['pendentes'] ? 'text-red-700' : 'text-slate-400' }}">não abriram</p>
+                        </a>
+                    </div>
+
                     @if($item['pendentes'])
-                    <div class="mt-3 flex items-center gap-1.5 text-[11px]">
+                    <div class="mt-2.5 flex items-center gap-1.5 text-[11px]">
                         <span class="text-slate-400">Faltam:</span>
                         <a href="{{ $urlPendenteSetor('publico', $codigo) }}" class="px-2 py-0.5 rounded-md font-semibold {{ $item['pendentes_publico'] ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'bg-slate-50 text-slate-400' }}">
                             🏛️ {{ $fmt($item['pendentes_publico']) }} públicos
@@ -255,176 +352,31 @@
                         </a>
                     </div>
                     @else
-                    <p class="mt-3 text-[11px] font-semibold text-emerald-600">✓ Todos que precisam já abriram</p>
+                    <p class="mt-2.5 text-[11px] font-semibold text-emerald-600">✓ Todos que precisam já abriram</p>
                     @endif
                 @endif
             </div>
         @endforeach
     </div>
 
-    <div class="flex items-center gap-3 px-4 py-3 rounded-2xl bg-indigo-50/60 border border-indigo-100 text-sm">
-        <span class="text-lg">⏱️</span>
-        <p class="text-indigo-900 flex-1">Quer saber <strong>quanto tempo leva cada etapa</strong> e <strong>quanto tempo os processos ficam em cada setor</strong>? Escolha um processo:</p>
-        @foreach($tipos as $codigo => $tipo)
-            <a href="{{ route('admin.relatorios.estabelecimentos', array_filter(['tipo' => $codigo] + request()->except(['page', 'situacao', 'tipo']))) }}"
-               class="px-2.5 py-1 rounded-lg bg-white ring-1 ring-indigo-200 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 whitespace-nowrap">{{ $tipo->nome }}</a>
-        @endforeach
-    </div>
-
-    @else
-    {{-- ===================== JORNADA DO PROCESSO ESCOLHIDO ===================== --}}
-    @php
-        $exigem = $indicadores['total'];
-        $abriram = $indicadores['em_dia'];
-        $completos = $indicadores['doc_completa'] + $indicadores['com_alvara'];
-        $licenciamento = $tipoFoco === 'licenciamento';
-        $passos = [
-            ['rotulo' => 'Precisam do processo', 'valor' => $exigem, 'nota' => $fmt($indicadores['publico']) . ' públicos · ' . $fmt($indicadores['privado']) . ' privados', 'url' => $urlSituacao(null), 'cor' => 'slate'],
-            ['rotulo' => 'Abriram o processo', 'valor' => $abriram, 'nota' => $pct($abriram, $exigem) . '% dos que precisam', 'url' => $urlSituacao('em_dia'), 'cor' => 'blue'],
-            ['rotulo' => 'Documentação completa', 'valor' => $completos, 'nota' => $pct($completos, $abriram) . '% dos que abriram', 'url' => $urlSituacao($licenciamento ? 'doc_completa' : 'doc_completa'), 'cor' => 'violet'],
-        ];
-        if ($licenciamento) {
-            $passos[] = ['rotulo' => 'Com alvará sanitário', 'valor' => $indicadores['com_alvara'], 'nota' => $pct($indicadores['com_alvara'], $completos) . '% dos completos', 'url' => $urlSituacao('com_alvara'), 'cor' => 'emerald'];
-        }
-        // O que "trava" entre um passo e o próximo
-        $travas = [
-            ['valor' => $indicadores['pendentes'], 'texto' => $indicadores['pendentes'] === 1 ? 'não abriu' : 'não abriram', 'url' => $urlSituacao('pendente'), 'extra' => '🏛️ ' . $fmt($indicadores['pendentes_publico']) . ' · 🏢 ' . $fmt($indicadores['pendentes_privado'])],
-            ['valor' => $indicadores['doc_incompleta'], 'texto' => 'com documentação incompleta', 'url' => $urlSituacao('doc_incompleta'), 'extra' => null],
-        ];
-        if ($licenciamento) {
-            $travas[] = ['valor' => $indicadores['doc_completa'], 'texto' => 'aguardando alvará', 'url' => $urlSituacao('doc_completa'), 'extra' => null];
-        }
-        $corPasso = [
-            'slate' => 'bg-slate-50 ring-slate-200 text-slate-900',
-            'blue' => 'bg-blue-50 ring-blue-200 text-blue-700',
-            'violet' => 'bg-violet-50 ring-violet-200 text-violet-700',
-            'emerald' => 'bg-emerald-50 ring-emerald-200 text-emerald-700',
-        ];
-    @endphp
-    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-        <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-            <div>
-                <h3 class="text-sm font-semibold text-slate-900">Jornada: {{ $tipos[$tipoFoco]->nome ?? '' }}{{ ($tipos[$tipoFoco]->anual ?? false) ? ' ' . $indicadores['ano'] : '' }}</h3>
-                <p class="text-[11px] text-slate-500">Onde os estabelecimentos estão e onde estão parando. Clique para ver a lista.</p>
-            </div>
-            <span class="text-xs text-slate-500">
-                <strong class="{{ $indicadores['processos_parados'] ? 'text-red-600' : 'text-slate-700' }}">{{ $fmt($indicadores['processos_parados']) }}</strong> {{ $indicadores['processos_parados'] === 1 ? 'processo parado' : 'processos parados' }}
-                · {{ $fmt($indicadores['processos_ativos']) }} em andamento
-            </span>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2 {{ count($passos) === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3' }}">
-            @foreach($passos as $i => $passo)
-                <a href="{{ $passo['url'] }}" class="relative rounded-xl ring-1 p-3 hover:ring-2 transition {{ $corPasso[$passo['cor']] }}">
-                    <p class="text-[11px] font-semibold uppercase tracking-wide opacity-80">{{ $passo['rotulo'] }}</p>
-                    <p class="text-2xl font-bold tabular-nums mt-0.5">{{ $fmt($passo['valor']) }}</p>
-                    <p class="text-[11px] text-slate-500">{{ $passo['nota'] }}</p>
-                    {{-- barra proporcional ao total que precisa --}}
-                    <div class="mt-2 h-1.5 rounded-full bg-white/80 overflow-hidden">
-                        <div class="h-full rounded-full bg-current opacity-60" style="width: {{ $pct($passo['valor'], $exigem) }}%"></div>
-                    </div>
-                </a>
-            @endforeach
-        </div>
-
-        {{-- Onde trava --}}
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 {{ count($passos) === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3' }}">
-            <div class="hidden lg:block"></div>
-            @foreach($travas as $trava)
-                <a href="{{ $trava['url'] }}" class="flex flex-wrap items-center gap-x-1.5 px-3 py-2 rounded-xl text-xs transition {{ $trava['valor'] ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'bg-slate-50 text-slate-400' }}">
-                    <span>↳</span>
-                    <strong class="tabular-nums">{{ $fmt($trava['valor']) }}</strong>
-                    <span>{{ $trava['texto'] }}</span>
-                    @if($trava['extra'] && $trava['valor'])<span class="w-full text-[11px] text-red-600/80">{{ $trava['extra'] }}</span>@endif
-                </a>
-            @endforeach
-        </div>
-    </div>
-
-    {{-- ===================== TEMPO MÉDIO ===================== --}}
-    @if($tempos && $tempos['total'] > 0)
-    @php
-        $fmtDur = fn ($s) => \App\Services\ProcessoLinhaTempoService::formatarDuracao($s);
-        $quem = [
-            'empresa' => ['rotulo' => 'aguardando a empresa', 'classe' => 'bg-amber-50 text-amber-700'],
-            'ambos' => ['rotulo' => 'empresa + vigilância', 'classe' => 'bg-blue-50 text-blue-700'],
-            'vigilancia' => ['rotulo' => 'com a vigilância', 'classe' => 'bg-violet-50 text-violet-700'],
-            'total' => ['rotulo' => 'do início ao fim', 'classe' => 'bg-emerald-50 text-emerald-700'],
-        ];
-        $intervalos = collect($tempos['intervalos'])->when(!$licenciamento, fn ($c) => $c->except(['completa_alvara', 'abertura_alvara']));
-        $maiorSetor = collect($tempos['setores'])->max('media') ?: 1;
-    @endphp
-    <div class="grid grid-cols-1 xl:grid-cols-5 gap-4">
-        <div class="xl:col-span-3 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-slate-900">⏱️ Quanto tempo leva cada etapa</h3>
-            <p class="text-[11px] text-slate-500 mb-4">Média dos {{ $fmt($tempos['total']) }} processos filtrados. A mediana mostra o caso "típico" (metade leva menos que isso).</p>
-            <div class="space-y-3">
-                @foreach($intervalos as $intervalo)
-                    <div class="flex items-center gap-3 p-3 rounded-xl bg-slate-50/70">
-                        <div class="flex-1 min-w-0">
-                            <p class="text-sm font-semibold text-slate-800">{{ $intervalo['titulo'] }}</p>
-                            <p class="text-[11px] text-slate-500 mt-0.5">
-                                <span class="px-1.5 py-0.5 rounded font-semibold {{ $quem[$intervalo['quem']]['classe'] }}">{{ $quem[$intervalo['quem']]['rotulo'] }}</span>
-                                @if($intervalo['processos'])
-                                    · mediana {{ $fmtDur($intervalo['mediana']) }} · máx. {{ $fmtDur($intervalo['maximo']) }} · {{ $fmt($intervalo['processos']) }} {{ $intervalo['processos'] === 1 ? 'processo' : 'processos' }}
-                                @endif
-                            </p>
-                        </div>
-                        <p class="text-xl font-bold tabular-nums whitespace-nowrap {{ $intervalo['processos'] ? 'text-slate-900' : 'text-slate-300' }}">
-                            {{ $intervalo['processos'] ? $fmtDur($intervalo['media']) : 'sem dados' }}
-                        </p>
-                    </div>
-                @endforeach
-            </div>
-        </div>
-
-        <div class="xl:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-slate-900">🏢 Tempo médio em cada setor</h3>
-            <p class="text-[11px] text-slate-500 mb-4">Quanto tempo, em média, um processo fica com cada setor.</p>
-            @forelse($tempos['setores'] as $setor)
-                <div class="mb-3">
-                    <div class="flex items-center justify-between gap-2 text-xs mb-1">
-                        <span class="font-semibold text-slate-800 truncate">{{ $setor['nome'] }}</span>
-                        <span class="font-bold text-slate-900 whitespace-nowrap">{{ $fmtDur($setor['media']) }}</span>
-                    </div>
-                    <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
-                        <div class="h-full rounded-full bg-indigo-500" style="width: {{ max(2, round($setor['media'] * 100 / $maiorSetor)) }}%"></div>
-                    </div>
-                    <p class="text-[10px] text-slate-400 mt-0.5">
-                        {{ $fmt($setor['processos']) }} {{ $setor['processos'] === 1 ? 'processo passou' : 'processos passaram' }}
-                        @if($setor['agora']) · <span class="text-blue-600 font-semibold">{{ $fmt($setor['agora']) }} estão lá agora</span>@endif
-                    </p>
-                </div>
-            @empty
-                <p class="text-xs text-slate-400">Sem registros de tramitação.</p>
-            @endforelse
-            <p class="mt-3 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
-                Para ver o caminho de um processo específico, abra o processo e clique em <strong>“Tempo por etapa”</strong>.
-            </p>
-        </div>
-    </div>
-    @endif
-    @endif
-
     {{-- Gráficos --}}
+    @php
+        $cabecalhoGrafico = fn ($icone, $classe, $titulo, $subtitulo) =>
+            '<div class="flex items-start gap-3 mb-4">'
+            . '<span class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ' . $classe . '"><svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="' . $icone . '"/></svg></span>'
+            . '<div><h3 class="text-sm font-semibold text-slate-900">' . e($titulo) . '</h3><p class="text-[11px] text-slate-500">' . e($subtitulo) . '</p></div></div>';
+    @endphp
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div class="xl:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <div class="flex items-center justify-between mb-3">
-                <div>
-                    <h3 class="text-sm font-semibold text-slate-900">Processos abertos por mês · {{ $indicadores['ano'] }}</h3>
-                    <p class="text-[11px] text-slate-500">Pela competência do estabelecimento</p>
-                </div>
-            </div>
+            {!! $cabecalhoGrafico('M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', 'bg-blue-50 text-blue-600', 'Processos abertos por mês · ' . $indicadores['ano'], 'Pela competência do estabelecimento') !!}
             <div class="h-64"><canvas id="chartAberturas"></canvas></div>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-slate-900">Situação: estadual x municipal</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Estabelecimentos em dia, pendentes e sem exigência</p>
+            {!! $cabecalhoGrafico('M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3', 'bg-emerald-50 text-emerald-600', 'Estadual x municipal', 'Em dia, pendentes e sem exigência') !!}
             <div class="h-64"><canvas id="chartCompetencia"></canvas></div>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-slate-900">Processos ativos por tipo</h3>
-            <p class="text-[11px] text-slate-500 mb-3">{{ $fmt($indicadores['processos_ativos']) }} em tramitação</p>
+            {!! $cabecalhoGrafico('M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z', 'bg-violet-50 text-violet-600', 'Processos ativos por tipo', $fmt($indicadores['processos_ativos']) . ' em tramitação') !!}
             <div class="h-60 relative">
                 @if($graficos['ativos_por_tipo']->isEmpty())
                     <div class="absolute inset-0 flex items-center justify-center text-xs text-slate-400">Nenhum processo ativo</div>
@@ -434,20 +386,17 @@
             </div>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-slate-900">Há quanto tempo estão abertos</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Idade dos processos ativos</p>
+            {!! $cabecalhoGrafico('M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', 'bg-amber-50 text-amber-600', 'Há quanto tempo estão abertos', 'Idade dos processos ativos') !!}
             <div class="h-60"><canvas id="chartIdade"></canvas></div>
         </div>
         @if($graficos['top_municipios']->isNotEmpty())
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-slate-900">Municípios com mais pendências</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Estabelecimentos que precisam abrir processo</p>
+            {!! $cabecalhoGrafico('M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z', 'bg-red-50 text-red-600', 'Municípios com mais pendências', 'Estabelecimentos que precisam abrir processo') !!}
             <div class="h-60"><canvas id="chartMunicipios"></canvas></div>
         </div>
         @else
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-slate-900">Abertura por tipo exigido</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Abriram x não abriram</p>
+            {!! $cabecalhoGrafico('M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z', 'bg-slate-100 text-slate-600', 'Abertura por tipo exigido', 'Abriram x não abriram') !!}
             <div class="h-60"><canvas id="chartCobertura"></canvas></div>
         </div>
         @endif
@@ -596,6 +545,15 @@
                             @endphp
                             @if(isset($linha['etapa']))
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset whitespace-nowrap {{ $etapaClasse[$linha['etapa']] ?? $sitClasse }}">{{ isset($linha['sub_etapa']) ? 'Doc. completa · sem alvará' : $linha['etapa_label'] }}</span>
+                            @if(($linha['etapa'] ?? null) === 'com_alvara')
+                                @if($linha['alvara_definitivo'] ?? false)
+                                    <p class="mt-1 text-[11px] font-semibold text-emerald-700">
+                                        ⏱ {{ $fmt($linha['dias_ate_alvara']) }} {{ $linha['dias_ate_alvara'] === 1 ? 'dia' : 'dias' }} até o definitivo
+                                    </p>
+                                @else
+                                    <p class="mt-1 text-[11px] font-semibold text-sky-700">📄 Só alvará provisório</p>
+                                @endif
+                            @endif
                             @isset($linha['sub_etapa'])
                                 <p class="mt-1 text-[11px] font-semibold {{ ['completa_favoravel' => 'text-emerald-700', 'completa_pendencia' => 'text-red-700', 'completa_sem_parecer' => 'text-slate-500'][$linha['sub_etapa']] ?? 'text-slate-500' }}">
                                     {{ $linha['sub_etapa_label'] }}
@@ -642,12 +600,41 @@
     Chart.defaults.font.size = 11;
     Chart.defaults.color = '#64748b';
     Chart.defaults.plugins.legend.labels.usePointStyle = true;
-    Chart.defaults.plugins.legend.labels.boxWidth = 8;
+    Chart.defaults.plugins.legend.labels.pointStyle = 'circle';
+    Chart.defaults.plugins.legend.labels.boxWidth = 7;
+    Chart.defaults.plugins.legend.labels.padding = 14;
+    Object.assign(Chart.defaults.plugins.tooltip, {
+        backgroundColor: '#0f172a', titleColor: '#fff', bodyColor: '#e2e8f0',
+        padding: 10, cornerRadius: 8, boxPadding: 4, usePointStyle: true,
+    });
+    Chart.defaults.animation.duration = 500;
 
-    const cores = { estadual: '#2563eb', municipal: '#10b981', emDia: '#10b981', pendente: '#ef4444', neutro: '#cbd5e1' };
-    const grid = { color: '#f1f5f9' };
+    const cores = { estadual: '#3b82f6', municipal: '#10b981', emDia: '#10b981', pendente: '#f87171', neutro: '#e2e8f0' };
+    const grid = { color: '#f1f5f9', drawTicks: false };
+    const semBorda = { display: false };
     const graficos = @json($graficos);
     const el = id => document.getElementById(id);
+    const soma = arr => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+
+    // Total no centro da rosca
+    const totalNoCentro = {
+        id: 'totalNoCentro',
+        afterDraw(chart) {
+            if (chart.config.type !== 'doughnut') return;
+            const { ctx, chartArea: { left, right, top, bottom } } = chart;
+            const x = (left + right) / 2, y = (top + bottom) / 2;
+            const total = soma(chart.data.datasets[0].data);
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#0f172a';
+            ctx.font = "700 22px 'Inter', system-ui, sans-serif";
+            ctx.fillText(total.toLocaleString('pt-BR'), x, y + 4);
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = "500 10px 'Inter', system-ui, sans-serif";
+            ctx.fillText('ATIVOS', x, y + 20);
+            ctx.restore();
+        }
+    };
 
     if (el('chartAberturas')) {
         new Chart(el('chartAberturas'), {
@@ -655,13 +642,21 @@
             data: {
                 labels: graficos.meses,
                 datasets: [
-                    { label: 'Estadual', data: graficos.aberturas.estadual, backgroundColor: cores.estadual, borderRadius: 4, maxBarThickness: 28 },
-                    { label: 'Municipal', data: graficos.aberturas.municipal, backgroundColor: cores.municipal, borderRadius: 4, maxBarThickness: 28 },
+                    { label: 'Estadual', data: graficos.aberturas.estadual, backgroundColor: cores.estadual, borderRadius: 6, maxBarThickness: 26 },
+                    { label: 'Municipal', data: graficos.aberturas.municipal, backgroundColor: cores.municipal, borderRadius: 6, maxBarThickness: 26 },
                 ]
             },
-            options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                scales: { y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid }, x: { stacked: true, grid: { display: false } } },
-                plugins: { legend: { position: 'top', align: 'end' } } }
+            options: {
+                maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                scales: {
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0, padding: 8 }, grid, border: semBorda },
+                    x: { stacked: true, grid: { display: false }, border: semBorda },
+                },
+                plugins: {
+                    legend: { position: 'top', align: 'end' },
+                    tooltip: { callbacks: { footer: itens => 'Total: ' + soma(itens.map(i => i.parsed.y)) } },
+                },
+            }
         });
     }
 
@@ -672,14 +667,19 @@
             data: {
                 labels: ['Estadual', 'Municipal'],
                 datasets: [
-                    { label: 'Em dia', data: [c.estadual.em_dia, c.municipal.em_dia], backgroundColor: cores.emDia, borderRadius: 4 },
-                    { label: 'Pendentes', data: [c.estadual.pendente, c.municipal.pendente], backgroundColor: cores.pendente, borderRadius: 4 },
-                    { label: 'Sem exigência', data: [c.estadual.sem_exigencia, c.municipal.sem_exigencia], backgroundColor: cores.neutro, borderRadius: 4 },
+                    { label: 'Em dia', data: [c.estadual.em_dia, c.municipal.em_dia], backgroundColor: cores.emDia, borderRadius: 6 },
+                    { label: 'Pendentes', data: [c.estadual.pendente, c.municipal.pendente], backgroundColor: cores.pendente, borderRadius: 6 },
+                    { label: 'Sem exigência', data: [c.estadual.sem_exigencia, c.municipal.sem_exigencia], backgroundColor: cores.neutro, borderRadius: 6 },
                 ]
             },
-            options: { maintainAspectRatio: false,
-                scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid } },
-                plugins: { legend: { position: 'bottom' } } }
+            options: {
+                maintainAspectRatio: false,
+                scales: {
+                    x: { stacked: true, grid: { display: false }, border: semBorda },
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0, padding: 8 }, grid, border: semBorda },
+                },
+                plugins: { legend: { position: 'bottom' } },
+            }
         });
     }
 
@@ -688,8 +688,10 @@
         new Chart(el('chartTipos'), {
             type: 'doughnut',
             data: { labels: Object.keys(tipos), datasets: [{ data: Object.values(tipos),
-                backgroundColor: ['#2563eb', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899', '#64748b', '#06b6d4'], borderWidth: 2, borderColor: '#fff' }] },
-            options: { maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'bottom' } } }
+                backgroundColor: ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899', '#64748b', '#06b6d4'],
+                borderWidth: 3, borderColor: '#fff', hoverOffset: 6 }] },
+            options: { maintainAspectRatio: false, cutout: '68%', plugins: { legend: { position: 'bottom' } } },
+            plugins: [totalNoCentro],
         });
     }
 
@@ -698,9 +700,14 @@
         new Chart(el('chartIdade'), {
             type: 'bar',
             data: { labels: Object.keys(idade), datasets: [{ label: 'Processos', data: Object.values(idade),
-                backgroundColor: ['#10b981', '#f59e0b', '#f97316', '#ef4444'], borderRadius: 6, maxBarThickness: 44 }] },
-            options: { maintainAspectRatio: false, plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid }, x: { grid: { display: false } } } }
+                backgroundColor: ['#34d399', '#fbbf24', '#fb923c', '#f87171'], borderRadius: 8, maxBarThickness: 46 }] },
+            options: {
+                maintainAspectRatio: false, plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0, padding: 8 }, grid, border: semBorda },
+                    x: { grid: { display: false }, border: semBorda },
+                },
+            }
         });
     }
 
@@ -708,9 +715,14 @@
         const m = graficos.top_municipios;
         new Chart(el('chartMunicipios'), {
             type: 'bar',
-            data: { labels: Object.keys(m), datasets: [{ label: 'Pendentes', data: Object.values(m), backgroundColor: '#ef4444', borderRadius: 4, maxBarThickness: 18 }] },
-            options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } },
-                scales: { x: { beginAtZero: true, ticks: { precision: 0 }, grid }, y: { grid: { display: false } } } }
+            data: { labels: Object.keys(m), datasets: [{ label: 'Pendentes', data: Object.values(m), backgroundColor: '#f87171', borderRadius: 6, maxBarThickness: 16 }] },
+            options: {
+                indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, ticks: { precision: 0 }, grid, border: semBorda },
+                    y: { grid: { display: false }, border: semBorda, ticks: { color: '#334155' } },
+                },
+            }
         });
     }
 
@@ -719,12 +731,17 @@
         new Chart(el('chartCobertura'), {
             type: 'bar',
             data: { labels: t.map(i => i.nome), datasets: [
-                { label: 'Abriram', data: t.map(i => i.atendidos), backgroundColor: cores.emDia, borderRadius: 4 },
-                { label: 'Não abriram', data: t.map(i => i.pendentes), backgroundColor: cores.pendente, borderRadius: 4 },
+                { label: 'Abriram', data: t.map(i => i.atendidos), backgroundColor: cores.emDia, borderRadius: 6 },
+                { label: 'Não abriram', data: t.map(i => i.pendentes), backgroundColor: cores.pendente, borderRadius: 6 },
             ] },
-            options: { indexAxis: 'y', maintainAspectRatio: false,
-                scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid }, y: { stacked: true, grid: { display: false } } },
-                plugins: { legend: { position: 'bottom' } } }
+            options: {
+                indexAxis: 'y', maintainAspectRatio: false,
+                scales: {
+                    x: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid, border: semBorda },
+                    y: { stacked: true, grid: { display: false }, border: semBorda, ticks: { color: '#334155' } },
+                },
+                plugins: { legend: { position: 'bottom' } },
+            }
         });
     }
 })();

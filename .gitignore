@@ -75,3 +75,6 @@ composer.lock
 # Documentação temporária/arquivos de referência
 docs/proposta-reestruturacao-listas-documento.md
 database/seeders/dados_pactuacao_resumo.txt
+
+# Pré-visualizações temporárias geradas em testes locais
+/public/_preview

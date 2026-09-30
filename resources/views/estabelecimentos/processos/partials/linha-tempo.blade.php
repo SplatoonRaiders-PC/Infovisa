@@ -155,6 +155,7 @@ function linhaTempoProcesso(url) {
         abertura: { barra: 'bg-amber-400', fundo: 'bg-amber-50 text-amber-900', anel: 'ring-amber-300' },
         primeiro_envio: { barra: 'bg-blue-500', fundo: 'bg-blue-50 text-blue-900', anel: 'ring-blue-300' },
         doc_completa: { barra: 'bg-violet-500', fundo: 'bg-violet-50 text-violet-900', anel: 'ring-violet-300' },
+        alvara_provisorio: { barra: 'bg-sky-400', fundo: 'bg-sky-50 text-sky-900', anel: 'ring-sky-300' },
         alvara: { barra: 'bg-emerald-500', fundo: 'bg-emerald-50 text-emerald-900', anel: 'ring-emerald-300' },
         arquivamento: { barra: 'bg-slate-400', fundo: 'bg-slate-100 text-slate-700', anel: 'ring-slate-300' },
     };
@@ -162,7 +163,8 @@ function linhaTempoProcesso(url) {
         abertura: 'aguardando a empresa enviar os documentos',
         primeiro_envio: 'envio, análise e correção dos documentos',
         doc_completa: 'análise técnica / inspeção da vigilância',
-        alvara: 'depois do alvará',
+        alvara_provisorio: 'funcionando com alvará provisório',
+        alvara: 'depois do alvará definitivo',
     };
 
     return {

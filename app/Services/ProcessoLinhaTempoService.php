@@ -6,17 +6,21 @@ use App\Models\DocumentoDigital;
 use App\Models\Processo;
 use App\Models\ProcessoDocumento;
 use App\Models\ProcessoEvento;
+use App\Models\TipoDocumentoSubcategoria;
 use App\Models\TipoSetor;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
 /**
  * Linha do tempo de um processo: quanto tempo levou cada etapa (abertura → envio da empresa →
- * documentação completa → alvará → arquivamento) e quanto tempo ficou em cada setor.
+ * documentação completa → alvará definitivo → arquivamento) e quanto tempo ficou em cada setor.
  *
  * Fontes: data de criação do processo, documentos enviados pela empresa (processo_documentos),
  * aprovação dos documentos obrigatórios, Alvará Sanitário assinado (documentos_digitais) e os eventos
  * de tramitação/arquivamento (processo_eventos).
+ *
+ * Alvará definitivo = Alvará Sanitário assinado com subcategoria "Definitivo" ou sem subcategoria
+ * (alvarás emitidos antes de existirem subcategorias). Provisório, Administrativo etc. não contam.
  */
 class ProcessoLinhaTempoService
 {
@@ -24,35 +28,21 @@ class ProcessoLinhaTempoService
         'abertura' => ['titulo' => 'Processo aberto', 'curto' => 'Abertura', 'icone' => '📂'],
         'primeiro_envio' => ['titulo' => 'Empresa enviou os primeiros documentos', 'curto' => '1º envio da empresa', 'icone' => '📤'],
         'doc_completa' => ['titulo' => 'Documentação obrigatória completa (aprovada)', 'curto' => 'Documentação completa', 'icone' => '✅'],
-        'alvara' => ['titulo' => 'Alvará Sanitário emitido', 'curto' => 'Alvará emitido', 'icone' => '🏅'],
+        'alvara_provisorio' => ['titulo' => 'Alvará não definitivo emitido (provisório)', 'curto' => 'Alvará provisório', 'icone' => '📄'],
+        'alvara' => ['titulo' => 'Alvará Sanitário definitivo emitido', 'curto' => 'Alvará definitivo', 'icone' => '🏅'],
         'arquivamento' => ['titulo' => 'Processo arquivado', 'curto' => 'Arquivamento', 'icone' => '🗄️'],
-    ];
-
-    /** Intervalos usados nas médias do relatório. */
-    public const INTERVALOS = [
-        'abertura_envio' => ['de' => 'abertura', 'ate' => 'primeiro_envio', 'titulo' => 'Da abertura ao 1º envio da empresa', 'quem' => 'empresa'],
-        'envio_completa' => ['de' => 'primeiro_envio', 'ate' => 'doc_completa', 'titulo' => 'Do 1º envio até a documentação completa', 'quem' => 'ambos'],
-        'completa_alvara' => ['de' => 'doc_completa', 'ate' => 'alvara', 'titulo' => 'Da documentação completa até o alvará', 'quem' => 'vigilancia'],
-        'abertura_alvara' => ['de' => 'abertura', 'ate' => 'alvara', 'titulo' => 'Tempo total até o alvará', 'quem' => 'total'],
     ];
 
     private const EVENTOS_TRAMITACAO = ['processo_atribuido', 'processo_arquivado', 'processo_desarquivado'];
 
     private ?Collection $nomesSetores = null;
 
-    /**
-     * @param array $opcoes Dados pré-carregados (usados no relatório para evitar consultas por processo):
-     *   - eventos: Collection de ProcessoEvento de tramitação, em ordem cronológica
-     *   - documentos: Collection de ProcessoDocumento do processo
-     *   - data_alvara: ?Carbon (false = não tem alvará)
-     *   - doc_completa: ?bool (null = calcular pelo checklist)
-     */
-    public function calcular(Processo $processo, array $opcoes = []): array
+    public function calcular(Processo $processo): array
     {
         $agora = now();
-        $documentos = $opcoes['documentos'] ?? ProcessoDocumento::where('processo_id', $processo->id)
+        $documentos = ProcessoDocumento::where('processo_id', $processo->id)
             ->get(['id', 'processo_id', 'tipo_usuario', 'created_at', 'updated_at', 'status_aprovacao', 'aprovado_em', 'tipo_documento_obrigatorio_id']);
-        $eventos = $opcoes['eventos'] ?? ProcessoEvento::where('processo_id', $processo->id)
+        $eventos = ProcessoEvento::where('processo_id', $processo->id)
             ->whereIn('tipo_evento', self::EVENTOS_TRAMITACAO)
             ->orderBy('created_at')
             ->get();
@@ -65,17 +55,20 @@ class ProcessoLinhaTempoService
             $marcos['primeiro_envio'] = Carbon::parse($primeiroEnvio);
         }
 
-        $docCompleta = $opcoes['doc_completa'] ?? $this->documentacaoCompleta($processo);
-        if ($docCompleta) {
+        if ($this->documentacaoCompleta($processo)) {
             $data = $this->dataDocumentacaoCompleta($documentos);
             if ($data) {
                 $marcos['doc_completa'] = $data;
             }
         }
 
-        $dataAlvara = array_key_exists('data_alvara', $opcoes) ? $opcoes['data_alvara'] : $this->datasAlvara(collect([$processo->id]))->get($processo->id);
-        if ($dataAlvara) {
-            $marcos['alvara'] = Carbon::parse($dataAlvara);
+        $alvara = $this->alvarasPorProcesso(collect([$processo->id]))->get($processo->id);
+        if ($alvara['definitivo'] ?? null) {
+            $marcos['alvara'] = $alvara['definitivo'];
+        }
+        // Provisório só aparece se veio antes do definitivo (ou se ainda não há definitivo)
+        if (($alvara['provisorio'] ?? null) && (!isset($marcos['alvara']) || $alvara['provisorio']->lessThan($marcos['alvara']))) {
+            $marcos['alvara_provisorio'] = $alvara['provisorio'];
         }
 
         $arquivado = $processo->status === 'arquivado';
@@ -126,7 +119,6 @@ class ProcessoLinhaTempoService
 
         return [
             'marcos' => collect($marcos)->map(fn ($data, $chave) => self::MARCOS[$chave] + ['chave' => $chave, 'data' => $data])->values()->all(),
-            'marcos_por_chave' => $marcos,
             'etapas' => $etapas,
             'trajeto' => $trajeto,
             'setores' => $setores,
@@ -144,90 +136,38 @@ class ProcessoLinhaTempoService
     }
 
     /**
-     * Médias do relatório: tempo médio entre marcos e tempo médio em cada setor.
-     *
-     * @param Collection $processos Processos (Eloquent)
-     * @param array<int, bool> $docCompletaPorProcesso processo_id => documentação obrigatória completa?
+     * Alvarás Sanitários assinados de cada processo (uma consulta para todos):
+     * processo_id => ['definitivo' => ?Carbon (primeiro definitivo), 'provisorio' => ?Carbon (primeiro não definitivo)].
      */
-    public function resumo(Collection $processos, array $docCompletaPorProcesso = []): array
+    public function alvarasPorProcesso(Collection $processoIds): Collection
     {
-        if ($processos->isEmpty()) {
-            return ['total' => 0, 'intervalos' => [], 'setores' => []];
+        if ($processoIds->isEmpty()) {
+            return collect();
         }
 
-        $ids = $processos->pluck('id');
-        $eventos = ProcessoEvento::whereIn('processo_id', $ids)
-            ->whereIn('tipo_evento', self::EVENTOS_TRAMITACAO)
-            ->orderBy('created_at')
-            ->get(['id', 'processo_id', 'tipo_evento', 'dados_adicionais', 'created_at'])
-            ->groupBy('processo_id');
-        $documentos = ProcessoDocumento::whereIn('processo_id', $ids)
-            ->get(['id', 'processo_id', 'tipo_usuario', 'created_at', 'updated_at', 'status_aprovacao', 'aprovado_em', 'tipo_documento_obrigatorio_id'])
-            ->groupBy('processo_id');
-        $alvaras = $this->datasAlvara($ids);
+        $definitivas = TipoDocumentoSubcategoria::query()
+            ->where(fn ($q) => $q->where('nome', 'ilike', '%definitiv%')->orWhere('codigo', 'ilike', '%definitiv%'))
+            ->pluck('id')
+            ->flip();
 
-        $linhas = $processos->map(fn ($p) => $this->calcular($p, [
-            'eventos' => $eventos->get($p->id, collect()),
-            'documentos' => $documentos->get($p->id, collect()),
-            'data_alvara' => $alvaras->get($p->id) ?? false,
-            'doc_completa' => $docCompletaPorProcesso[$p->id] ?? false,
-        ]));
-
-        $intervalos = collect(self::INTERVALOS)->map(function ($info, $chave) use ($linhas) {
-            $duracoes = $linhas
-                ->map(function ($l) use ($info) {
-                    $de = $l['marcos_por_chave'][$info['de']] ?? null;
-                    $ate = $l['marcos_por_chave'][$info['ate']] ?? null;
-
-                    return $de && $ate && $ate->greaterThanOrEqualTo($de) ? $ate->getTimestamp() - $de->getTimestamp() : null;
-                })
-                ->filter(fn ($s) => $s !== null)
-                ->sort()
-                ->values();
-
-            return $info + [
-                'chave' => $chave,
-                'processos' => $duracoes->count(),
-                'media' => $duracoes->isNotEmpty() ? (int) round($duracoes->avg()) : null,
-                'mediana' => $duracoes->isNotEmpty() ? (int) $duracoes->median() : null,
-                'maximo' => $duracoes->max(),
-            ];
-        })->all();
-
-        // Tempo médio que um processo fica em cada setor (entre os que passaram por ele)
-        $setores = $linhas
-            ->flatMap(fn ($l) => $l['setores'])
-            ->groupBy('setor')
-            ->map(fn ($itens) => [
-                'nome' => $itens->first()['nome'],
-                'processos' => $itens->count(),
-                'media' => (int) round($itens->avg('segundos')),
-                'agora' => $itens->where('atual', true)->count(),
-            ])
-            ->sortByDesc('media')
-            ->values()
-            ->all();
-
-        return ['total' => $processos->count(), 'intervalos' => $intervalos, 'setores' => $setores];
-    }
-
-    /**
-     * Data do primeiro Alvará Sanitário assinado de cada processo.
-     */
-    public function datasAlvara(Collection $processoIds): Collection
-    {
         return DocumentoDigital::query()
             ->whereIn('processo_id', $processoIds)
             ->where('status', 'assinado')
             ->whereHas('tipoDocumento', fn ($q) => $q->where('codigo', 'alvara_sanitario'))
             ->withMax('assinaturas', 'assinado_em')
-            ->get(['id', 'processo_id', 'finalizado_em', 'updated_at'])
-            ->map(fn ($d) => [
-                'processo_id' => $d->processo_id,
-                'data' => Carbon::parse($d->finalizado_em ?? $d->assinaturas_max_assinado_em ?? $d->updated_at),
-            ])
+            ->get(['id', 'processo_id', 'subcategoria_id', 'finalizado_em', 'updated_at'])
             ->groupBy('processo_id')
-            ->map(fn ($itens) => $itens->min('data'));
+            ->map(function ($docs) use ($definitivas) {
+                $datas = $docs->map(fn ($d) => [
+                    'definitivo' => $d->subcategoria_id === null || $definitivas->has($d->subcategoria_id),
+                    'data' => Carbon::parse($d->finalizado_em ?? $d->assinaturas_max_assinado_em ?? $d->updated_at),
+                ]);
+
+                return [
+                    'definitivo' => $datas->where('definitivo', true)->min('data'),
+                    'provisorio' => $datas->where('definitivo', false)->min('data'),
+                ];
+            });
     }
 
     /**
