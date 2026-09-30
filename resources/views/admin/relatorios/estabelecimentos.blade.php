@@ -295,6 +295,7 @@
     {{-- Cobertura por tipo de processo --}}
     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
         @foreach($indicadores['por_tipo'] as $codigo => $item)
+            @continue($codigo === 'licenciamento')
             @php
                 $cor = $coresTipo[$iconesTipo[$codigo]['cor'] ?? 'blue'];
                 $tom = $tons[$tomCobertura($item['cobertura'])];
