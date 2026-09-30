@@ -1136,6 +1136,37 @@ class EstabelecimentoController extends Controller
             ];
         }
 
+        // Atividades exercidas salvas que a Receita não devolve mais (CNAE removido do CNPJ
+        // depois do cadastro). Precisam aparecer: senão ficam marcadas "invisíveis", continuam
+        // definindo a competência e não podem ser desmarcadas.
+        $codigosNumericosApi = collect($atividadesApi)
+            ->map(fn ($a) => preg_replace('/[^0-9]/', '', (string) ($a['codigo'] ?? '')))
+            ->filter()
+            ->all();
+
+        foreach (($estabelecimento->atividades_exercidas ?? []) as $atividadeSalva) {
+            $codigoOriginal = is_array($atividadeSalva) ? (string) ($atividadeSalva['codigo'] ?? '') : (string) $atividadeSalva;
+            if (in_array(strtoupper($codigoOriginal), ['PROJ_ARQ', 'ANAL_ROT'], true)) {
+                continue;
+            }
+
+            $codigoLimpo = preg_replace('/[^0-9]/', '', $codigoOriginal);
+            if ($codigoLimpo === '' || in_array($codigoLimpo, $codigosNumericosApi, true)) {
+                continue;
+            }
+
+            $atividadesApi[] = [
+                'codigo' => strlen($codigoLimpo) === 7
+                    ? substr($codigoLimpo, 0, 2) . '.' . substr($codigoLimpo, 2, 2) . '-' . substr($codigoLimpo, 4, 1) . '-' . substr($codigoLimpo, 5, 2)
+                    : $codigoOriginal,
+                'descricao' => is_array($atividadeSalva) ? ($atividadeSalva['descricao'] ?? '') : '',
+                'tipo' => (is_array($atividadeSalva) && !empty($atividadeSalva['principal'])) ? 'principal' : 'secundaria',
+                'manual' => is_array($atividadeSalva) && !empty($atividadeSalva['manual']),
+                'fora_receita' => !(is_array($atividadeSalva) && !empty($atividadeSalva['manual'])),
+            ];
+            $codigosNumericosApi[] = $codigoLimpo;
+        }
+
         // Atividades especiais da Tabela VI não vêm da Receita Federal.
         // No admin, elas devem aparecer para que somente o administrador marque/desmarque.
         $codigosDisponiveis = collect($atividadesApi)

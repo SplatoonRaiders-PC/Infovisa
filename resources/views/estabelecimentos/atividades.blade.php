@@ -218,6 +218,10 @@
                                     <span x-show="atividade.especial" class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">
                                         Somente admin
                                     </span>
+                                    <span x-show="atividade.fora_receita" class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800"
+                                          title="Esta atividade está salva no cadastro, mas não consta mais no CNPJ na Receita Federal. Desmarque se o estabelecimento não a exerce.">
+                                        ⚠️ Não consta mais na Receita
+                                    </span>
                                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-mono font-semibold bg-gray-100 text-gray-800" 
                                           x-text="atividade.codigo"></span>
                                 </div>
