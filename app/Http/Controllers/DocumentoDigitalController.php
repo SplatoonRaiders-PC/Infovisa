@@ -1334,7 +1334,8 @@ class DocumentoDigitalController extends Controller
             $this->sincronizarItensAtendimento($documento, $itensAtendimento);
             $this->sincronizarColaboradoresExigencias($documento, $colaboradoresExigencias);
 
-            // Atualiza assinaturas
+            // Atualiza assinaturas (delete em massa não dispara evento: limpa o robô de pendências aqui)
+            \App\Support\AssistentePendencias::limpar($documento->assinaturas()->pluck('usuario_interno_id'));
             $documento->assinaturas()->delete();
             foreach ($request->assinaturas as $index => $usuarioId) {
                 DocumentoAssinatura::create([
@@ -1814,9 +1815,10 @@ class DocumentoDigitalController extends Controller
                 \Storage::disk('public')->delete($documento->arquivo_pdf);
             }
             
-            // Remove assinaturas
+            // Remove assinaturas (delete em massa não dispara evento: limpa o robô de pendências aqui)
+            \App\Support\AssistentePendencias::limpar($documento->assinaturas()->pluck('usuario_interno_id'));
             $documento->assinaturas()->delete();
-            
+
             // Remove documento
             $documento->delete();
             
@@ -2049,6 +2051,7 @@ class DocumentoDigitalController extends Controller
             // Remove assinantes que não estão mais na lista
             $assinantesRemover = array_diff($assinantesAtuais, $assinantesNovos);
             if (!empty($assinantesRemover)) {
+                \App\Support\AssistentePendencias::limpar($assinantesRemover);
                 DocumentoAssinatura::where('documento_digital_id', $id)
                     ->whereIn('usuario_interno_id', $assinantesRemover)
                     ->delete();

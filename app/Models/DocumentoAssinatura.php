@@ -24,6 +24,17 @@ class DocumentoAssinatura extends Model
         'assinado_em' => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        // Assinatura criada, feita ou removida: atualiza o robô de pendências do assinante
+        $limparAssistente = function (self $assinatura) {
+            \App\Support\AssistentePendencias::limpar([$assinatura->usuario_interno_id]);
+        };
+
+        static::saved($limparAssistente);
+        static::deleted($limparAssistente);
+    }
+
     /**
      * Relacionamento com documento digital
      */

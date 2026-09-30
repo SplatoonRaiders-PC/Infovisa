@@ -340,5 +340,23 @@ class DocumentoResposta extends Model
                 }
             }
         });
+
+        // Resposta nova ou analisada: o robô de pendências dos envolvidos precisa refletir na hora
+        static::saved(function (self $resposta) {
+            if (!$resposta->wasRecentlyCreated && !$resposta->wasChanged(['status', 'prazo_analise_data_limite'])) {
+                return;
+            }
+
+            try {
+                $assinantes = DocumentoAssinatura::where('documento_digital_id', $resposta->documento_digital_id)
+                    ->pluck('usuario_interno_id');
+
+                \App\Support\AssistentePendencias::limpar(
+                    $assinantes->push($resposta->avaliado_por, auth('interno')->id())
+                );
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        });
     }
 }

@@ -560,7 +560,7 @@ class ChatInternoController extends Controller
     public function assistente(Request $request): JsonResponse
     {
         $usuario = auth('interno')->user();
-        $chaveCache = 'chat_assistente_pendencias_v3_' . $usuario->id;
+        $chaveCache = \App\Support\AssistentePendencias::chave($usuario->id);
 
         if ($request->boolean('atualizar')) {
             Cache::forget($chaveCache);
