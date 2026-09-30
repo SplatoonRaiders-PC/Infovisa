@@ -106,6 +106,88 @@ class CnpjService
     }
 
     /**
+     * Limite gratuito por minuto das fontes mais atualizadas (as demais não têm limite rígido)
+     */
+    private const LIMITE_POR_MINUTO = [
+        'publica_cnpj_ws' => 3,
+        'receita_ws' => 3,
+    ];
+
+    /**
+     * Consulta nas APIs gratuitas priorizando a mais ATUALIZADA disponível
+     * (nunca usa a CNPJa, que consome créditos). Usada nas verificações de CNAE.
+     *
+     * Ordem: Publica CNPJ WS e ReceitaWS (dados mais recentes, ~3 consultas/min cada)
+     * → BrasilAPI e Minha Receita (base mensal da Receita, sem limite rígido).
+     * Quando a cota por minuto de uma fonte acaba, passa para a próxima sem esperar.
+     */
+    public function consultarCnpjFontesGratuitas(string $cnpj): ?array
+    {
+        $cnpjLimpo = preg_replace('/[^0-9]/', '', $cnpj);
+
+        if (strlen($cnpjLimpo) !== 14) {
+            return null;
+        }
+
+        $fontes = [
+            'publica_cnpj_ws' => fn () => $this->consultarPublicaCnpjWs($cnpjLimpo),
+            'receita_ws' => fn () => $this->consultarReceitaWs($cnpjLimpo),
+            'brasil_api' => fn () => $this->consultarBrasilApi($cnpjLimpo),
+            'minha_receita' => fn () => $this->consultarMinhaReceita($cnpjLimpo),
+        ];
+
+        foreach ($fontes as $fonte => $consultar) {
+            if (!$this->fonteDisponivel($fonte)) {
+                continue;
+            }
+
+            $this->registrarUsoFonte($fonte);
+            $dados = $consultar();
+
+            if ($dados !== null) {
+                return $dados;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Quantas consultas das fontes limitadas ainda cabem no minuto atual
+     */
+    public function consultasAtualizadasDisponiveis(): int
+    {
+        return collect(array_keys(self::LIMITE_POR_MINUTO))
+            ->sum(fn ($fonte) => \Illuminate\Support\Facades\RateLimiter::remaining('cnpj-api:' . $fonte, self::LIMITE_POR_MINUTO[$fonte]));
+    }
+
+    /**
+     * Segundos até liberar a próxima consulta em alguma fonte atualizada
+     */
+    public function segundosAteProximaConsultaAtualizada(): int
+    {
+        return (int) collect(array_keys(self::LIMITE_POR_MINUTO))
+            ->map(fn ($fonte) => \Illuminate\Support\Facades\RateLimiter::availableIn('cnpj-api:' . $fonte))
+            ->min();
+    }
+
+    private function fonteDisponivel(string $fonte): bool
+    {
+        if (!isset(self::LIMITE_POR_MINUTO[$fonte])) {
+            return true;
+        }
+
+        return !\Illuminate\Support\Facades\RateLimiter::tooManyAttempts('cnpj-api:' . $fonte, self::LIMITE_POR_MINUTO[$fonte]);
+    }
+
+    private function registrarUsoFonte(string $fonte): void
+    {
+        if (isset(self::LIMITE_POR_MINUTO[$fonte])) {
+            \Illuminate\Support\Facades\RateLimiter::hit('cnpj-api:' . $fonte, 60);
+        }
+    }
+
+    /**
      * Consulta priorizando fontes com dados mais atualizados (CNPJa > Publica).
      * Usada quando o usuário sabe que alterou CNAEs recentemente e a primeira
      * consulta trouxe dados antigos.

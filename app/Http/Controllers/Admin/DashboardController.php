@@ -1001,10 +1001,23 @@ class DashboardController extends Controller
         }
         
         // "Meu Setor" = aprovações pendentes + processos no setor
-        $stats['setor_total'] = ($stats['total_pendentes_aprovacao'] ?? 0) 
+        $stats['setor_total'] = ($stats['total_pendentes_aprovacao'] ?? 0)
             + ($stats['processos_do_setor'] ?? 0);
 
+        // Estabelecimentos com CNAE alterado na Receita (respeita a competência do usuário)
+        $alertasCnaeQuery = \App\Models\EstabelecimentoVerificacaoCnae::pendentes()->paraUsuario($usuario);
+        $alertas_cnae_total = (clone $alertasCnaeQuery)->count();
+        $alertas_cnae_mudam_competencia = $alertas_cnae_total > 0
+            ? (clone $alertasCnaeQuery)->where('altera_competencia', true)->count()
+            : 0;
+        $alertas_cnae = $alertas_cnae_total > 0
+            ? (clone $alertasCnaeQuery)->with('estabelecimento:id,nome_fantasia,razao_social,nome_completo,cnpj,cidade')->prioridade()->limit(8)->get()
+            : collect();
+
         return view('admin.dashboard', compact(
+            'alertas_cnae',
+            'alertas_cnae_total',
+            'alertas_cnae_mudam_competencia',
             'stats',
             'usuarios_externos_recentes',
             'usuarios_internos_recentes',
@@ -1025,6 +1038,32 @@ class DashboardController extends Controller
             'eh_aniversariante_hoje',
             'escopoAniversariantes'
         ));
+    }
+
+    /**
+     * Lista completa de estabelecimentos com CNAE alterado na Receita
+     * (respeita a competência do usuário: estadual, municipal ou administrador)
+     */
+    public function atividadesAlteradas(Request $request)
+    {
+        $usuario = Auth::guard('interno')->user();
+        $filtro = $request->input('filtro');
+
+        $query = \App\Models\EstabelecimentoVerificacaoCnae::pendentes()
+            ->paraUsuario($usuario)
+            ->with('estabelecimento:id,nome_fantasia,razao_social,nome_completo,cnpj,cidade');
+
+        $total = (clone $query)->count();
+        $totalMudamCompetencia = (clone $query)->where('altera_competencia', true)->count();
+
+        if ($filtro === 'competencia') {
+            $query->where('altera_competencia', true);
+        }
+
+        $alertas = $query->prioridade()->paginate(30)->withQueryString();
+        $ultimaVerificacao = \App\Models\EstabelecimentoVerificacaoCnae::max('verificado_em');
+
+        return view('admin.dashboard.atividades-alteradas', compact('alertas', 'total', 'totalMudamCompetencia', 'filtro', 'ultimaVerificacao'));
     }
 
     /**

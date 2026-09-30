@@ -212,6 +212,7 @@ Route::middleware(['auth:interno', 'no-cache-auth'])->prefix('admin')->name('adm
     Route::get('/dashboard/processos-atribuidos', [DashboardController::class, 'processosAtribuidosPaginados'])->name('dashboard.processos-atribuidos');
     Route::get('/dashboard/processos-sob-minha-responsabilidade', [DashboardController::class, 'processosSobMinhaResponsabilidade'])->name('dashboard.processos-responsabilidade');
     Route::get('/dashboard/ordens-servico-vencidas', [DashboardController::class, 'ordensServicoVencidas'])->name('dashboard.ordens-servico-vencidas');
+    Route::get('/dashboard/atividades-alteradas', [DashboardController::class, 'atividadesAlteradas'])->name('dashboard.atividades-alteradas');
     Route::get('/dashboard/respostas-atrasadas-analise', [DashboardController::class, 'respostasAtrasadasParaAnalise'])->name('dashboard.respostas-atrasadas-analise');
     Route::get('/dashboard/todas-tarefas', [DashboardController::class, 'todasTarefas'])->name('dashboard.todas-tarefas');
     Route::get('/dashboard/todas-tarefas-paginadas', [DashboardController::class, 'todasTarefasPaginadas'])->name('dashboard.todas-tarefas-paginadas');

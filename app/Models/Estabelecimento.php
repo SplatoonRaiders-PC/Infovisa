@@ -953,6 +953,42 @@ class Estabelecimento extends Model
     }
     
     /**
+     * Competência de UMA atividade pela pactuação (somente informativo).
+     * Usa o mesmo município, respostas de questionário e verificação de
+     * isCompetenciaEstadual(), sem alterar a regra do estabelecimento.
+     *
+     * @return array{competencia: string, descentralizado: bool, excecao_hospitalar: bool, tabela: ?string, sem_resposta: bool}
+     */
+    public function getCompetenciaAtividade(string $cnae): array
+    {
+        $codigo = in_array(strtoupper($cnae), ['PROJ_ARQ', 'ANAL_ROT'], true)
+            ? strtoupper($cnae)
+            : preg_replace('/[^0-9]/', '', $cnae);
+
+        $municipio = $this->cidade ? trim(preg_replace('/\s*[-\/]\s*TO\s*$/i', '', $this->cidade)) : null;
+
+        $resposta1 = null;
+        $resposta2 = null;
+        if ($this->respostas_questionario) {
+            $resposta1 = $this->respostas_questionario[$codigo] ?? $this->respostas_questionario[(int) $codigo] ?? null;
+        }
+        if ($this->respostas_questionario2) {
+            $resposta2 = $this->respostas_questionario2[$codigo] ?? $this->respostas_questionario2[(int) $codigo] ?? null;
+        }
+
+        $resultado = Pactuacao::verificarCompetenciaAvancada($codigo, $municipio, $resposta1, $resposta2);
+        $detalhes = $resultado['detalhes'] ?? [];
+
+        return [
+            'competencia' => $resultado['competencia'] ?? 'municipal',
+            'descentralizado' => !empty($detalhes['descentralizado']),
+            'excecao_hospitalar' => !empty($detalhes['excecao_hospitalar']),
+            'tabela' => $detalhes['tabela'] ?? null,
+            'sem_resposta' => !empty($detalhes['requer_questionario']) && $resposta1 === null,
+        ];
+    }
+
+    /**
      * Determina se o estabelecimento é de competência municipal
      * Um estabelecimento é municipal se TODAS as suas atividades forem municipais
      * e NENHUMA for estadual

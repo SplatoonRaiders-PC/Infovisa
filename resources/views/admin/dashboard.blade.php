@@ -22,7 +22,8 @@
 
 @php
     $countAvisos = (isset($avisos_sistema) ? $avisos_sistema->count() : 0)
-        + ((($stats['estabelecimentos_pendentes'] ?? 0) > 0) ? 1 : 0);
+        + ((($stats['estabelecimentos_pendentes'] ?? 0) > 0) ? 1 : 0)
+        + ((($alertas_cnae_total ?? 0) > 0) ? 1 : 0);
     $countAcompanhamento = (isset($processos_acompanhados) ? count($processos_acompanhados) : 0);
     $mostraAvisos = $countAvisos > 0 || auth('interno')->user()->isGestor() || auth('interno')->user()->isAdmin();
     $mostraAcompanhamento = $countAcompanhamento > 0 || (isset($aniversariantes_mes) && $aniversariantes_mes->count() > 0);
@@ -311,6 +312,40 @@
             </div>
         </div>
         @endforeach
+    </div>
+    @endif
+
+    {{-- Card: Atividades alteradas no CNPJ (Receita) — respeita a competência do usuário --}}
+    @if(($alertas_cnae_total ?? 0) > 0)
+    <div x-data="{ aberto: {{ ($alertas_cnae_mudam_competencia ?? 0) > 0 ? 'true' : 'false' }} }" class="bg-white rounded-2xl border {{ ($alertas_cnae_mudam_competencia ?? 0) > 0 ? 'border-red-200/80' : 'border-amber-200/80' }} shadow-sm overflow-hidden">
+        <button type="button" @click="aberto = !aberto"
+                class="w-full flex items-center gap-3 px-4 py-3 bg-gradient-to-r {{ ($alertas_cnae_mudam_competencia ?? 0) > 0 ? 'from-red-50 hover:from-red-100/70' : 'from-amber-50 hover:from-amber-100/70' }} to-white transition group text-left">
+            <div class="w-9 h-9 rounded-xl {{ ($alertas_cnae_mudam_competencia ?? 0) > 0 ? 'bg-red-500 shadow-red-500/25' : 'bg-amber-500 shadow-amber-500/25' }} shadow-md flex items-center justify-center flex-shrink-0">
+                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-semibold text-slate-900">Atividades alteradas no CNPJ</p>
+                <p class="text-xs text-slate-500">
+                    Estabelecimentos cujo CNPJ na Receita mudou de CNAE — revise as atividades
+                    @if(($alertas_cnae_mudam_competencia ?? 0) > 0)
+                        · <strong class="text-red-600">{{ $alertas_cnae_mudam_competencia }} {{ $alertas_cnae_mudam_competencia == 1 ? 'muda' : 'mudam' }} de competência</strong>
+                    @endif
+                </p>
+            </div>
+            <span class="text-xs min-w-[26px] text-center px-2 py-1 {{ ($alertas_cnae_mudam_competencia ?? 0) > 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700' }} rounded-full font-bold">{{ $alertas_cnae_total }}</span>
+            <svg class="w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-transform" :class="aberto ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+        <div x-show="aberto" x-cloak class="border-t border-slate-100">
+            <div class="divide-y divide-slate-100 max-h-[380px] overflow-y-auto">
+                @foreach($alertas_cnae as $alerta)
+                    @include('admin.dashboard.partials.alerta-cnae-item', ['alerta' => $alerta])
+                @endforeach
+            </div>
+            <a href="{{ route('admin.dashboard.atividades-alteradas') }}" class="flex items-center justify-center gap-1 px-4 py-2.5 text-xs font-semibold text-blue-700 bg-slate-50 hover:bg-blue-50 border-t border-slate-100 transition">
+                Ver todos ({{ $alertas_cnae_total }})
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </a>
+        </div>
     </div>
     @endif
 

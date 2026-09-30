@@ -173,12 +173,43 @@
             </div>
         </div>
 
+        {{-- Alerta: CNAEs do CNPJ alterados na Receita --}}
+        @php
+            $alertaCnae = \App\Models\EstabelecimentoVerificacaoCnae::where('estabelecimento_id', $estabelecimento->id)
+                ->where('status', 'divergente')->first();
+        @endphp
+        @if($alertaCnae)
+        <div class="rounded-xl border p-4 {{ $alertaCnae->altera_competencia ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200' }}">
+            <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 flex-shrink-0 mt-0.5 {{ $alertaCnae->altera_competencia ? 'text-red-600' : 'text-amber-600' }}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+                <div class="text-sm {{ $alertaCnae->altera_competencia ? 'text-red-800' : 'text-amber-900' }}">
+                    <p class="font-semibold">
+                        O CNPJ deste estabelecimento mudou na Receita (detectado em {{ $alertaCnae->detectado_em?->format('d/m/Y') }})
+                        @if($alertaCnae->altera_competencia)
+                            — a revisão muda a competência de {{ ucfirst($alertaCnae->competencia_atual) }} para {{ ucfirst($alertaCnae->competencia_sugerida) }}
+                        @endif
+                    </p>
+                    <ul class="mt-1 text-xs space-y-0.5 list-disc list-inside">
+                        @foreach($alertaCnae->cnaes_removidos ?? [] as $cnae)
+                            <li><strong>Saiu do CNPJ:</strong> {{ \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae($cnae['codigo'] ?? '') }} — {{ $cnae['descricao'] ?? '' }} ({{ ucfirst($cnae['competencia'] ?? '') }}). Desmarque se não é mais exercida.</li>
+                        @endforeach
+                        @foreach($alertaCnae->cnaes_novos ?? [] as $cnae)
+                            <li><strong>Novo no CNPJ:</strong> {{ \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae($cnae['codigo'] ?? '') }} — {{ $cnae['descricao'] ?? '' }} ({{ ucfirst($cnae['competencia'] ?? '') }}). Marque se o estabelecimento exerce.</li>
+                        @endforeach
+                    </ul>
+                    <p class="text-xs mt-1.5 opacity-80">Ao salvar as atividades, este alerta é encerrado.</p>
+                </div>
+            </div>
+        </div>
+        @endif
+
         {{-- Lista de Atividades --}}
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div class="flex items-center justify-between mb-5">
                 <div>
                     <h2 class="text-lg font-semibold text-gray-900">Atividades Disponíveis</h2>
                     <p class="text-sm text-gray-500 mt-1">Selecione as atividades que o estabelecimento pratica</p>
+                    <p class="text-xs text-gray-400 mt-0.5">Cada atividade mostra sua competência pela pactuação. Se pelo menos uma atividade marcada for estadual, o estabelecimento é estadual.</p>
                 </div>
                 <div class="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-lg">
                     <svg class="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
@@ -222,8 +253,19 @@
                                           title="Esta atividade está salva no cadastro, mas não consta mais no CNPJ na Receita Federal. Desmarque se o estabelecimento não a exerce.">
                                         ⚠️ Não consta mais na Receita
                                     </span>
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-mono font-semibold bg-gray-100 text-gray-800" 
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-mono font-semibold bg-gray-100 text-gray-800"
                                           x-text="atividade.codigo"></span>
+                                    {{-- Competência da atividade pela pactuação (informativo) --}}
+                                    <template x-if="atividade.competencia">
+                                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ring-1"
+                                              :class="atividade.competencia === 'estadual' ? 'bg-purple-50 text-purple-700 ring-purple-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'"
+                                              :title="atividade.sem_resposta ? 'Depende da resposta ao questionário (ainda sem resposta)' : ('Pactuação' + (atividade.tabela ? ' — Tabela ' + atividade.tabela : ''))">
+                                            <span x-text="atividade.competencia === 'estadual' ? '🏛️ Estadual' : '🏠 Municipal'"></span>
+                                            <span x-show="atividade.descentralizado" class="font-normal opacity-80">(descentralizado)</span>
+                                            <span x-show="atividade.excecao_hospitalar" class="font-normal opacity-80">(exceção hospitalar)</span>
+                                            <span x-show="atividade.sem_resposta" class="font-normal opacity-80">(sem resposta ao questionário)</span>
+                                        </span>
+                                    </template>
                                 </div>
                                 <p class="text-sm text-gray-900 font-medium" x-text="atividade.descricao"></p>
                             </label>

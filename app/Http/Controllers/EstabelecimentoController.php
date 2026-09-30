@@ -1031,45 +1031,33 @@ class EstabelecimentoController extends Controller
             return view('estabelecimentos.atividades-fisica', compact('estabelecimento'));
         }
         
-        // Buscar atividades da API ReceitaWS se for pessoa jurídica
+        // Buscar atividades do CNPJ na Receita (fonte mais atualizada disponível) se for pessoa jurídica
         $atividadesApi = [];
         if ($estabelecimento->tipo_pessoa === 'juridica' && $estabelecimento->cnpj) {
             try {
-                $cnpj = preg_replace('/[^0-9]/', '', $estabelecimento->cnpj);
-                $response = Http::timeout(10)->get("https://receitaws.com.br/v1/cnpj/{$cnpj}");
-                
-                if ($response->successful()) {
-                    $dados = $response->json();
-                    
-                    // Atividade principal
-                    if (!empty($dados['atividade_principal'])) {
-                        foreach ($dados['atividade_principal'] as $atividade) {
-                            $codigo = $atividade['code'] ?? '';
-                            // Filtra códigos inválidos ou vazios
-                            if (empty($codigo) || $codigo === '00.00-0-00') continue;
-                            
-                            $atividadesApi[] = [
-                                'codigo' => $codigo,
-                                'descricao' => $atividade['text'] ?? '',
-                                'tipo' => 'principal'
-                            ];
-                        }
-                    }
-                    
-                    // Atividades secundárias
-                    if (!empty($dados['atividades_secundarias'])) {
-                        foreach ($dados['atividades_secundarias'] as $atividade) {
-                            $codigo = $atividade['code'] ?? '';
-                            // Filtra códigos inválidos ou vazios
-                            if (empty($codigo) || $codigo === '00.00-0-00') continue;
+                $dados = app(\App\Services\CnpjService::class)->consultarCnpjFontesGratuitas($estabelecimento->cnpj);
 
-                            $atividadesApi[] = [
-                                'codigo' => $codigo,
-                                'descricao' => $atividade['text'] ?? '',
-                                'tipo' => 'secundaria'
-                            ];
-                        }
+                if ($dados && preg_replace('/[^0-9]/', '', (string) ($dados['cnae_fiscal'] ?? '')) !== '') {
+                    $atividadesApi[] = [
+                        'codigo' => \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae((string) $dados['cnae_fiscal']),
+                        'descricao' => $dados['cnae_fiscal_descricao'] ?? '',
+                        'tipo' => 'principal',
+                    ];
+
+                    foreach (($dados['cnaes_secundarios'] ?? []) as $atividade) {
+                        $codigo = preg_replace('/[^0-9]/', '', (string) (is_array($atividade) ? ($atividade['codigo'] ?? '') : $atividade));
+                        // Filtra códigos inválidos ou vazios (ex.: 00.00-0-00)
+                        if (strlen($codigo) !== 7 || (int) $codigo === 0) continue;
+
+                        $atividadesApi[] = [
+                            'codigo' => \App\Models\EstabelecimentoVerificacaoCnae::formatarCnae($codigo),
+                            'descricao' => is_array($atividade) ? ($atividade['descricao'] ?? '') : '',
+                            'tipo' => 'secundaria',
+                        ];
                     }
+
+                    // Aproveita a consulta para atualizar o alerta de CNAE alterado
+                    app(\App\Services\VerificacaoCnaeService::class)->verificar($estabelecimento, $dados);
                 }
             } catch (\Exception $e) {
                 \Log::error('Erro ao buscar atividades da API: ' . $e->getMessage());
@@ -1210,6 +1198,16 @@ class EstabelecimentoController extends Controller
             ];
         }
         
+        // Competência de cada atividade pela pactuação (somente informativo, não altera a regra)
+        foreach ($atividadesApi as &$atividadeInfo) {
+            try {
+                $atividadeInfo += $estabelecimento->getCompetenciaAtividade((string) ($atividadeInfo['codigo'] ?? ''));
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+        unset($atividadeInfo);
+
         return view('estabelecimentos.atividades', compact('estabelecimento', 'atividadesApi', 'questionariosRespondidos'));
     }
 
@@ -1294,7 +1292,15 @@ class EstabelecimentoController extends Controller
         ]);
         
         $estabelecimento->touch();
-        
+
+        // Atividades revisadas: encerra o alerta de CNAE alterado na Receita (se houver)
+        try {
+            app(\App\Services\VerificacaoCnaeService::class)
+                ->marcarRevisado($estabelecimento, auth('interno')->id());
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
         return redirect()
             ->route('admin.estabelecimentos.show', $estabelecimento->id)
             ->with('success', 'Atividades atualizadas com sucesso!');
