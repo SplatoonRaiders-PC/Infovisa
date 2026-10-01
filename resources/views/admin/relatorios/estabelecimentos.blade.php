@@ -83,74 +83,130 @@
     </div>
 
     {{-- Filtros --}}
-    <form method="GET" action="{{ route('admin.relatorios.estabelecimentos') }}"
-          class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
+    @php
+        $anoAtual = (int) now()->year;
+        // Filtros ativos (diferentes do padrão), cada um com link para removê-lo
+        $removerFiltro = fn (...$chaves) => route('admin.relatorios.estabelecimentos', array_filter(request()->except(array_merge(['page'], $chaves)), fn ($v) => $v !== null && $v !== ''));
+        $filtrosAtivos = array_values(array_filter([
+            $filtros['busca'] !== '' ? ['rotulo' => 'Busca: "' . $filtros['busca'] . '"', 'url' => $removerFiltro('busca')] : null,
+            $filtros['ano'] !== $anoAtual ? ['rotulo' => 'Ano ' . $filtros['ano'], 'url' => $removerFiltro('ano')] : null,
+            $filtros['competencia'] ? ['rotulo' => 'Competência ' . ucfirst($filtros['competencia']), 'url' => $removerFiltro('competencia')] : null,
+            $filtros['municipio_id'] ? ['rotulo' => 'Município: ' . ($municipios->firstWhere('id', $filtros['municipio_id'])->nome ?? $filtros['municipio_id']), 'url' => $removerFiltro('municipio_id')] : null,
+            $filtros['tipo'] ? ['rotulo' => $tipos[$filtros['tipo']]->nome ?? $filtros['tipo'], 'url' => $removerFiltro('tipo', 'situacao')] : null,
+            $filtros['setor'] ? ['rotulo' => $filtros['setor'] === 'publico' ? 'Setor público' : 'Setor privado', 'url' => $removerFiltro('setor')] : null,
+            $filtros['status_estabelecimento'] === 'todos' ? ['rotulo' => 'Todos os cadastros', 'url' => $removerFiltro('status_estabelecimento')] : null,
+            $filtros['situacao'] ? ['rotulo' => 'Situação: ' . ($situacoes[$filtros['situacao']]['label'] ?? $filtros['situacao']), 'url' => $removerFiltro('situacao')] : null,
+        ]));
+        $campoSelect = 'w-full pl-9 pr-8 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition';
+        $segmento = 'px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition text-slate-600 hover:text-slate-900 has-[:checked]:bg-white has-[:checked]:text-blue-700 has-[:checked]:shadow-sm has-[:checked]:ring-1 has-[:checked]:ring-slate-200';
+    @endphp
+    <form method="GET" action="{{ route('admin.relatorios.estabelecimentos') }}" x-data
+          @change="if ($event.target.name === 'busca') return;
+                   if ($event.target.name === 'tipo') $el.querySelector('input[type=hidden][name=situacao]')?.remove();
+                   $el.requestSubmit()"
+          class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
         @if($filtros['situacao'])<input type="hidden" name="situacao" value="{{ $filtros['situacao'] }}">@endif
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-9 gap-3 items-end">
-            <div>
-                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Ano de referência</label>
-                <select name="ano" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    @foreach($anos as $ano)
-                        <option value="{{ $ano }}" @selected($filtros['ano'] === (int) $ano)>{{ $ano }}</option>
+
+        {{-- Linha 1: busca + processo exigido --}}
+        <div class="flex flex-col lg:flex-row lg:items-center gap-3 p-4 border-b border-slate-100">
+            <div class="relative flex-1 min-w-0">
+                <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" name="busca" value="{{ $filtros['busca'] }}" placeholder="Buscar estabelecimento por nome ou CNPJ/CPF..."
+                       class="w-full pl-9 pr-24 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
+                <button type="submit" class="absolute right-1.5 top-1/2 -translate-y-1/2 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+                    Buscar
+                </button>
+            </div>
+
+            <div class="flex items-center gap-2 flex-shrink-0 overflow-x-auto">
+                <span class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Processo exigido</span>
+                <div class="inline-flex p-1 bg-slate-100 rounded-xl">
+                    <label class="{{ $segmento }}">
+                        <input type="radio" name="tipo" value="" class="sr-only" @checked(!$filtros['tipo'])>Todos
+                    </label>
+                    @foreach($tipos as $codigo => $tipo)
+                        <label class="{{ $segmento }} whitespace-nowrap">
+                            <input type="radio" name="tipo" value="{{ $codigo }}" class="sr-only" @checked($filtros['tipo'] === $codigo)>{{ $tipo->nome }}
+                        </label>
                     @endforeach
-                </select>
+                </div>
+            </div>
+        </div>
+
+        {{-- Linha 2: demais filtros (aplicam ao mudar) --}}
+        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 p-4 bg-slate-50/50">
+            <div>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-1">Ano de referência</label>
+                <div class="relative">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <select name="ano" class="{{ $campoSelect }}">
+                        @foreach($anos as $ano)
+                            <option value="{{ $ano }}" @selected($filtros['ano'] === (int) $ano)>{{ $ano }}</option>
+                        @endforeach
+                    </select>
+                </div>
             </div>
             @if($usuarioLogado->isAdmin())
             <div>
-                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Competência</label>
-                <select name="competencia" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="">Estadual e municipal</option>
-                    <option value="estadual" @selected($filtros['competencia'] === 'estadual')>Estadual</option>
-                    <option value="municipal" @selected($filtros['competencia'] === 'municipal')>Municipal</option>
-                </select>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-1">Competência</label>
+                <div class="relative">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>
+                    <select name="competencia" class="{{ $campoSelect }}">
+                        <option value="">Todas</option>
+                        <option value="estadual" @selected($filtros['competencia'] === 'estadual')>Estadual</option>
+                        <option value="municipal" @selected($filtros['competencia'] === 'municipal')>Municipal</option>
+                    </select>
+                </div>
             </div>
             @endif
             @if($municipios->isNotEmpty())
             <div>
-                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Município</label>
-                <select name="municipio_id" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="">Todos</option>
-                    @foreach($municipios as $municipio)
-                        <option value="{{ $municipio->id }}" @selected($filtros['municipio_id'] === $municipio->id)>{{ $municipio->nome }}</option>
-                    @endforeach
-                </select>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-1">Município</label>
+                <div class="relative">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <select name="municipio_id" class="{{ $campoSelect }}">
+                        <option value="">Todos</option>
+                        @foreach($municipios as $municipio)
+                            <option value="{{ $municipio->id }}" @selected($filtros['municipio_id'] === $municipio->id)>{{ $municipio->nome }}</option>
+                        @endforeach
+                    </select>
+                </div>
             </div>
             @endif
-            <div>
-                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Processo exigido</label>
-                <select name="tipo" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="">Todos os tipos</option>
-                    @foreach($tipos as $codigo => $tipo)
-                        <option value="{{ $codigo }}" @selected($filtros['tipo'] === $codigo)>{{ $tipo->nome }}</option>
-                    @endforeach
-                </select>
+            <div class="col-span-2 md:col-span-1">
+                <label class="block text-[11px] font-semibold text-slate-500 mb-1">Setor</label>
+                <div class="flex p-1 bg-slate-100 rounded-lg">
+                    <label class="flex-1 text-center whitespace-nowrap {{ $segmento }}"><input type="radio" name="setor" value="" class="sr-only" @checked(!$filtros['setor'])>Todos</label>
+                    <label class="flex-1 text-center whitespace-nowrap {{ $segmento }}"><input type="radio" name="setor" value="publico" class="sr-only" @checked($filtros['setor'] === 'publico')>Público</label>
+                    <label class="flex-1 text-center whitespace-nowrap {{ $segmento }}"><input type="radio" name="setor" value="privado" class="sr-only" @checked($filtros['setor'] === 'privado')>Privado</label>
+                </div>
             </div>
             <div>
-                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Setor</label>
-                <select name="setor" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="">Público e privado</option>
-                    <option value="publico" @selected($filtros['setor'] === 'publico')>Público</option>
-                    <option value="privado" @selected($filtros['setor'] === 'privado')>Privado</option>
-                </select>
-            </div>
-            <div>
-                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Cadastro</label>
-                <select name="status_estabelecimento" class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="aprovado" @selected($filtros['status_estabelecimento'] === 'aprovado')>Aprovados e ativos</option>
-                    <option value="todos" @selected($filtros['status_estabelecimento'] === 'todos')>Todos os cadastros (exceto rejeitados)</option>
-                </select>
-            </div>
-            <div class="col-span-2">
-                <label class="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Buscar</label>
-                <input type="text" name="busca" value="{{ $filtros['busca'] }}" placeholder="Nome ou CNPJ/CPF"
-                       class="w-full px-2.5 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-            </div>
-            <div class="col-span-2 md:col-span-1 2xl:col-span-2 flex gap-2">
-                <button type="submit" class="flex-1 px-3 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">Aplicar</button>
-                <a href="{{ route('admin.relatorios.estabelecimentos') }}" title="Limpar filtros"
-                   class="px-3 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition">Limpar</a>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-1">Cadastro</label>
+                <div class="relative">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <select name="status_estabelecimento" class="{{ $campoSelect }}">
+                        <option value="aprovado" @selected($filtros['status_estabelecimento'] === 'aprovado')>Aprovados e ativos</option>
+                        <option value="todos" @selected($filtros['status_estabelecimento'] === 'todos')>Todos (exceto rejeitados)</option>
+                    </select>
+                </div>
             </div>
         </div>
+
+        {{-- Filtros ativos --}}
+        @if(count($filtrosAtivos) > 0)
+        <div class="flex flex-wrap items-center gap-2 px-4 py-2.5 border-t border-slate-100">
+            <span class="text-[11px] font-semibold text-slate-500">Filtrando por:</span>
+            @foreach($filtrosAtivos as $ativo)
+                <a href="{{ $ativo['url'] }}" title="Remover este filtro"
+                   class="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-0.5 text-xs font-medium text-blue-700 bg-blue-50 ring-1 ring-blue-200 rounded-full hover:bg-blue-100 transition">
+                    {{ $ativo['rotulo'] }}
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </a>
+            @endforeach
+            <a href="{{ route('admin.relatorios.estabelecimentos') }}" class="ml-auto text-xs font-semibold text-slate-500 hover:text-red-600 transition">Limpar tudo</a>
+        </div>
+        @endif
     </form>
 
     @if($filtros['tipo'] && isset($tipos[$filtros['tipo']]))
@@ -534,6 +590,13 @@
                                                 {{ $demanda['nome'] }}{{ $demanda['anual'] ? ' ' . $filtros['ano'] : '' }}
                                                 <span class="font-bold">· não aberto</span>
                                             </span>
+                                            @if(!empty($demanda['arquivado']))
+                                                <a href="{{ route('admin.estabelecimentos.processos.show', [$e->id, $demanda['arquivado']->id]) }}"
+                                                   title="Processo arquivado sem alvará sanitário: não conta como aberto"
+                                                   class="self-start text-[10px] text-slate-500 hover:text-slate-800 underline decoration-dotted underline-offset-2">
+                                                    {{ $demanda['arquivado']->numero_processo }} arquivado (desconsiderado)
+                                                </a>
+                                            @endif
                                         @endif
                                     @endforeach
                                 </div>
@@ -608,6 +671,8 @@
         Como a exigência é calculada: atividades CNAE comuns exigem <strong>Licenciamento</strong> (anual, verificado no ano de referência);
         a atividade <strong>Projeto Arquitetônico</strong> (PROJ_ARQ) e a <strong>Análise de Rotulagem</strong> (ANAL_ROT) exigem o respectivo processo, aberto uma única vez.
         Processo ativo = qualquer processo não arquivado.
+        Processo <strong>arquivado sem Alvará Sanitário</strong> não conta como aberto (o estabelecimento aparece em "Não abriram");
+        arquivado com alvará conta como licenciamento concluído.
     </p>
 </div>
 @endsection

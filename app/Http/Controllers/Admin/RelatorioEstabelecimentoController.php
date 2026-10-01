@@ -34,6 +34,9 @@ class RelatorioEstabelecimentoController extends Controller
 
     private const STATUS_INATIVOS = ['arquivado', 'concluido', 'aprovado', 'indeferido'];
 
+    /** IDs (como chaves) dos processos arquivados que têm Alvará Sanitário assinado */
+    private ?Collection $arquivadosComAlvara = null;
+
     /** Cadastros do escopo sem nenhuma atividade marcada (calculado em montarLinhas). */
     private int $totalSemAtividade = 0;
 
@@ -206,7 +209,18 @@ class RelatorioEstabelecimentoController extends Controller
             });
         }
 
-        $linhas = $query->orderByRaw('COALESCE(nome_fantasia, razao_social) asc')->get()
+        $estabelecimentos = $query->orderByRaw('COALESCE(nome_fantasia, razao_social) asc')->get();
+
+        // Processos ARQUIVADOS só contam se o licenciamento foi concluído (tem Alvará Sanitário assinado)
+        $arquivados = $estabelecimentos
+            ->flatMap(fn ($e) => $e->processos->where('status', 'arquivado')->whereIn('tipo', self::TIPOS_CONTROLADOS)->pluck('id'))
+            ->values();
+        $this->arquivadosComAlvara = app(\App\Services\ProcessoLinhaTempoService::class)
+            ->alvarasPorProcesso($arquivados)
+            ->keys()
+            ->flip();
+
+        $linhas = $estabelecimentos
             ->map(fn (Estabelecimento $e) => $this->montarLinha($e, $tipos, $filtros))
             ->filter(fn ($linha) => $this->dentroDoEscopo($linha, $usuario, $filtros['competencia']))
             ->values();
@@ -385,10 +399,13 @@ class RelatorioEstabelecimentoController extends Controller
                 continue;
             }
 
-            $processo = $e->processos
+            $processosDoTipo = $e->processos
                 ->where('tipo', $codigo)
-                ->when($tipo->anual, fn ($c) => $c->where('ano', $filtros['ano']))
-                ->first();
+                ->when($tipo->anual, fn ($c) => $c->where('ano', $filtros['ano']));
+
+            // Arquivado sem alvará não conta (o estabelecimento precisa abrir de novo)
+            $ignorado = fn ($p) => $p->status === 'arquivado' && !$this->arquivadosComAlvara?->has($p->id);
+            $processo = $processosDoTipo->reject($ignorado)->first();
 
             $demandas[$codigo] = [
                 'codigo' => $codigo,
@@ -396,6 +413,8 @@ class RelatorioEstabelecimentoController extends Controller
                 'atendida' => (bool) $processo,
                 'processo' => $processo,
                 'anual' => (bool) $tipo->anual,
+                // Só para informação na lista: processo arquivado (sem alvará) que foi desconsiderado
+                'arquivado' => $processo ? null : $processosDoTipo->filter($ignorado)->first(),
             ];
         }
 
