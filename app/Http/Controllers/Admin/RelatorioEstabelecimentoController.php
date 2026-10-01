@@ -138,7 +138,7 @@ class RelatorioEstabelecimentoController extends Controller
                 ? $request->input('competencia') : null,
             'municipio_id' => $podeFiltrarMunicipio && $request->filled('municipio_id') ? $request->integer('municipio_id') : null,
             'tipo' => in_array($request->input('tipo'), self::TIPOS_CONTROLADOS, true) ? $request->input('tipo') : null,
-            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'sem_atividade', 'com_alvara', 'doc_completa', 'doc_incompleta', 'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer'], true)
+            'situacao' => in_array($request->input('situacao'), ['pendente', 'em_dia', 'com_ativo', 'sem_ativo', 'sem_exigencia', 'sem_atividade', 'com_alvara', 'alvara_doc_incompleta', 'doc_completa', 'doc_incompleta', 'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer'], true)
                 ? $request->input('situacao') : null,
             'status_estabelecimento' => $request->input('status_estabelecimento', 'aprovado') === 'todos' ? 'todos' : 'aprovado',
             'setor' => in_array($request->input('setor'), ['publico', 'privado'], true) ? $request->input('setor') : null,
@@ -254,13 +254,19 @@ class RelatorioEstabelecimentoController extends Controller
             ? app(\App\Services\ProcessoLinhaTempoService::class)->alvarasPorProcesso($processos->pluck('id'))
             : collect();
 
-        // Checklist de documentos obrigatórios só para quem ainda não tem alvará (mesma regra da tela de Processos)
-        $semAlvara = $processos->reject(fn ($p) => $comAlvara->has($p->id))->values();
-        if ($semAlvara->isNotEmpty()) {
-            $semAlvara->load(['documentos', 'pastas', 'unidades']);
+        // Checklist de documentos obrigatórios (mesma regra da tela de Processos)
+        if ($processos->isNotEmpty()) {
+            $processos->load(['documentos', 'pastas', 'unidades']);
         }
 
-        $linhas = $linhas->map(function ($linha) use ($tipo, $comAlvara) {
+        $docCompleta = function ($processo, $linha) {
+            $processo->setRelation('estabelecimento', $linha['estabelecimento']);
+            $obrigatorios = $processo->getDocumentosObrigatoriosChecklist()->where('obrigatorio', true);
+
+            return $obrigatorios->isEmpty() || $obrigatorios->every(fn ($d) => $d['status'] === 'aprovado');
+        };
+
+        $linhas = $linhas->map(function ($linha) use ($tipo, $comAlvara, $docCompleta) {
             $processo = $linha['demandas'][$tipo]['processo'] ?? null;
 
             if (!$processo) {
@@ -271,11 +277,10 @@ class RelatorioEstabelecimentoController extends Controller
                 $definitivo = $comAlvara[$processo->id]['definitivo'];
                 $linha['alvara_definitivo'] = (bool) $definitivo;
                 $linha['dias_ate_alvara'] = $definitivo ? (int) $processo->created_at->diffInDays($definitivo) : null;
+                // Na tela de Processos estes aparecem como "Incompletos" (o checklist não olha o alvará)
+                $linha['alvara_doc_incompleta'] = !$docCompleta($processo, $linha);
             } else {
-                $processo->setRelation('estabelecimento', $linha['estabelecimento']);
-                $obrigatorios = $processo->getDocumentosObrigatoriosChecklist()->where('obrigatorio', true);
-                $completo = $obrigatorios->isEmpty() || $obrigatorios->every(fn ($d) => $d['status'] === 'aprovado');
-                $etapa = $completo ? 'doc_completa' : 'doc_incompleta';
+                $etapa = $docCompleta($processo, $linha) ? 'doc_completa' : 'doc_incompleta';
             }
 
             $linha['etapa'] = $etapa;
@@ -511,6 +516,7 @@ class RelatorioEstabelecimentoController extends Controller
                         'sem_exigencia' => $l['situacao'] === 'sem_exigencia',
                         'sem_atividade' => $l['sem_atividade'],
                         'com_alvara', 'doc_completa', 'doc_incompleta' => ($l['etapa'] ?? null) === $filtros['situacao'],
+                        'alvara_doc_incompleta' => (bool) ($l['alvara_doc_incompleta'] ?? false),
                         'completa_favoravel', 'completa_pendencia', 'completa_sem_parecer' => ($l['sub_etapa'] ?? null) === $filtros['situacao'],
                         default => true,
                     };
@@ -563,6 +569,7 @@ class RelatorioEstabelecimentoController extends Controller
             'por_tipo' => $porTipo,
             // Etapas (só quando há um tipo de processo escolhido)
             'com_alvara' => $linhas->where('etapa', 'com_alvara')->count(),
+            'alvara_doc_incompleta' => $linhas->where('alvara_doc_incompleta', true)->count(),
             'alvara_definitivo' => $linhas->where('alvara_definitivo', true)->count(),
             'alvara_nao_definitivo' => $linhas->where('etapa', 'com_alvara')->where('alvara_definitivo', false)->count(),
             'media_dias_alvara' => ($dias = $linhas->pluck('dias_ate_alvara')->filter(fn ($d) => $d !== null))->isNotEmpty()

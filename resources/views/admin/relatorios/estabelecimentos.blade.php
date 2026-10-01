@@ -95,7 +95,7 @@
             $filtros['tipo'] ? ['rotulo' => $tipos[$filtros['tipo']]->nome ?? $filtros['tipo'], 'url' => $removerFiltro('tipo', 'situacao')] : null,
             $filtros['setor'] ? ['rotulo' => $filtros['setor'] === 'publico' ? 'Setor público' : 'Setor privado', 'url' => $removerFiltro('setor')] : null,
             $filtros['status_estabelecimento'] === 'todos' ? ['rotulo' => 'Todos os cadastros', 'url' => $removerFiltro('status_estabelecimento')] : null,
-            $filtros['situacao'] ? ['rotulo' => 'Situação: ' . ($situacoes[$filtros['situacao']]['label'] ?? $filtros['situacao']), 'url' => $removerFiltro('situacao')] : null,
+            $filtros['situacao'] ? ['rotulo' => 'Situação: ' . ($situacoes[$filtros['situacao']]['label'] ?? ['alvara_doc_incompleta' => 'Com alvará e doc. incompleta', 'completa_favoravel' => 'Parecer favorável', 'completa_pendencia' => 'Parecer desfavorável / notificação', 'completa_sem_parecer' => 'Aguardando parecer'][$filtros['situacao']] ?? $filtros['situacao']), 'url' => $removerFiltro('situacao')] : null,
         ]));
         $campoSelect = 'w-full pl-9 pr-8 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition';
         $segmento = 'px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition text-slate-600 hover:text-slate-900 has-[:checked]:bg-white has-[:checked]:text-blue-700 has-[:checked]:shadow-sm has-[:checked]:ring-1 has-[:checked]:ring-slate-200';
@@ -277,6 +277,11 @@
             @if($indicadores['media_dias_alvara'] !== null)
                 <p class="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100/70 text-[11px] font-semibold text-emerald-800">
                     ⏱ média de {{ $fmt($indicadores['media_dias_alvara']) }} {{ $indicadores['media_dias_alvara'] === 1 ? 'dia' : 'dias' }} até o definitivo
+                </p>
+            @endif
+            @if(($indicadores['alvara_doc_incompleta'] ?? 0) > 0)
+                <p class="mt-1.5 text-[11px] font-semibold text-amber-700">
+                    ⚠ {{ $fmt($indicadores['alvara_doc_incompleta']) }} com documentação incompleta
                 </p>
             @endif
         </a>
@@ -503,6 +508,21 @@
             </div>
         </div>
 
+        {{-- Explica a diferença para a tela de Processos ("Incompletos" lá inclui quem já tem alvará) --}}
+        @if($tipoFoco === 'licenciamento' && ($indicadores['alvara_doc_incompleta'] ?? 0) > 0)
+            @php $ativaAlvaraIncompleta = ($filtros['situacao'] ?? null) === 'alvara_doc_incompleta'; @endphp
+            <div class="px-5 py-2.5 border-b border-amber-100 bg-amber-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <p class="text-[11px] text-amber-900 leading-relaxed">
+                    <strong>{{ $fmt($indicadores['alvara_doc_incompleta']) }} {{ $indicadores['alvara_doc_incompleta'] === 1 ? 'estabelecimento já tem' : 'estabelecimentos já têm' }} alvará sanitário, mas com documentação obrigatória incompleta.</strong>
+                    Aqui {{ $indicadores['alvara_doc_incompleta'] === 1 ? 'ele conta' : 'eles contam' }} em "Com alvará sanitário"; na tela de Processos, aparece{{ $indicadores['alvara_doc_incompleta'] === 1 ? '' : 'm' }} também em "Incompletos".
+                </p>
+                <a href="{{ $urlSituacao('alvara_doc_incompleta') }}"
+                   class="self-start sm:self-auto whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold ring-1 ring-inset transition {{ $ativaAlvaraIncompleta ? 'bg-amber-600 text-white ring-amber-600' : 'bg-white text-amber-800 ring-amber-300 hover:bg-amber-100' }}">
+                    Ver esses {{ $fmt($indicadores['alvara_doc_incompleta']) }}
+                </a>
+            </div>
+        @endif
+
         @if($tipoFoco === 'licenciamento')
             @php
                 $subParecer = [
@@ -630,6 +650,9 @@
                             @if(isset($linha['etapa']))
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset whitespace-nowrap {{ $etapaClasse[$linha['etapa']] ?? $sitClasse }}">{{ isset($linha['sub_etapa']) ? 'Doc. completa · sem alvará' : $linha['etapa_label'] }}</span>
                             @if(($linha['etapa'] ?? null) === 'com_alvara')
+                                @if($linha['alvara_doc_incompleta'] ?? false)
+                                    <p class="mt-1 text-[11px] font-semibold text-amber-700" title="Algum documento obrigatório do processo não está aprovado">⚠ Doc. obrigatória incompleta</p>
+                                @endif
                                 @if($linha['alvara_definitivo'] ?? false)
                                     <p class="mt-1 text-[11px] font-semibold text-emerald-700">
                                         ⏱ {{ $fmt($linha['dias_ate_alvara']) }} {{ $linha['dias_ate_alvara'] === 1 ? 'dia' : 'dias' }} até o definitivo
